@@ -62,14 +62,6 @@ class DxfDocument:
             )
         )
 
-    def text(self, x: float, y: float, text: str, height: float = 4.0, layer: str = "INFO") -> None:
-        safe_text = text.replace("\n", " ")[:120]
-        self.entities.append(
-            "\n".join(
-                ["0", "TEXT", "8", layer, "10", fmt(x), "20", fmt(y), "30", "0", "40", fmt(height), "1", safe_text]
-            )
-        )
-
     def add_segments(self, segments: list[Segment]) -> None:
         for segment in segments:
             if segment.kind == "line":
@@ -116,7 +108,7 @@ class DxfDocument:
 
     @staticmethod
     def layers_table() -> str:
-        layers = [("CUT", 1), ("INFO", 8)]
+        layers = [("CUT", 1)]
         lines = ["0", "TABLE", "2", "LAYER", "70", str(len(layers))]
         for name, color in layers:
             lines.extend(["0", "LAYER", "2", name, "70", "0", "62", str(color), "6", "CONTINUOUS"])
@@ -129,10 +121,7 @@ def generate_dxf(params: BoxParams) -> str:
     verify_assembly(params)
 
     doc = DxfDocument()
-    doc.text(0, -8, f"{params.label}; толщина {fmt(params.thickness)} мм; рез {fmt(params.kerf)} мм")
-
     for panel in build_panels(params):
-        doc.text(panel.x, panel.y - 7, panel.title)
         doc.add_segments(panel.segments)
 
     return doc.to_string()
