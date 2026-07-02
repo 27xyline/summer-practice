@@ -1,62 +1,60 @@
-from __future__ import annotations
-
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True)
 class BoxParams:
-    inner_length: float = 120.0
-    inner_width: float = 80.0
-    inner_height: float = 50.0
-    thickness: float = 3.0
-    kerf: float = 0.12
-    tab_width: float = 12.0
-    hole_diameter: float = 4.0
-    hole_margin: float = 10.0
-    corner_radius: float = 3.0
-    panel_gap: float = 12.0
-    include_lid: bool = True
-    label: str = "Монтажный короб"
+    def __init__(
+        self,
+        inner_length=120.0,
+        inner_width=80.0,
+        inner_height=50.0,
+        thickness=3.0,
+        kerf=0.12,
+        tab_width=12.0,
+        hole_diameter=4.0,
+        hole_margin=10.0,
+        corner_radius=3.0,
+        panel_gap=12.0,
+        include_lid=True,
+        label="Монтажный короб",
+    ):
+        self.inner_length = inner_length
+        self.inner_width = inner_width
+        self.inner_height = inner_height
+        self.thickness = thickness
+        self.kerf = kerf
+        self.tab_width = tab_width
+        self.hole_diameter = hole_diameter
+        self.hole_margin = hole_margin
+        self.corner_radius = corner_radius
+        self.panel_gap = panel_gap
+        self.include_lid = include_lid
+        self.label = label
 
-    @property
-    def outer_length(self) -> float:
-        return self.inner_length + 2 * self.thickness
-
-    @property
-    def outer_width(self) -> float:
-        return self.inner_width + 2 * self.thickness
-
-    @property
-    def slot_width(self) -> float:
-        return self.thickness + self.kerf
-
-    @property
-    def tab_depth(self) -> float:
-        return self.thickness - self.kerf * 0.5
+        self.outer_length = self.inner_length + 2 * self.thickness
+        self.outer_width = self.inner_width + 2 * self.thickness
+        self.slot_width = self.thickness + self.kerf
+        self.tab_depth = self.thickness - self.kerf * 0.5
 
 
-@dataclass(frozen=True)
 class Segment:
-    kind: str
-    values: tuple[float, ...]
-    layer: str = "CUT"
+    def __init__(self, kind, values, layer="CUT"):
+        self.kind = kind
+        self.values = values
+        self.layer = layer
 
 
-@dataclass(frozen=True)
 class Panel:
-    title: str
-    x: float
-    y: float
-    segments: list[Segment]
+    def __init__(self, title, x, y, segments):
+        self.title = title
+        self.x = x
+        self.y = y
+        self.segments = segments
 
 
-def fmt(value: float) -> str:
+def fmt(value):
     if abs(value) < 1e-9:
         value = 0.0
     return f"{value:.4f}".rstrip("0").rstrip(".")
 
 
-def validate_params(params: BoxParams) -> None:
+def validate_params(params):
     if params.inner_length < 40 or params.inner_width < 30 or params.inner_height < 20:
         raise ValueError("Габариты слишком маленькие для устойчивого короба.")
     if params.thickness <= 0 or params.kerf < 0:
@@ -71,7 +69,7 @@ def validate_params(params: BoxParams) -> None:
         raise ValueError("Радиус скругления не может быть отрицательным.")
 
 
-def verify_assembly(params: BoxParams) -> None:
+def verify_assembly(params):
     length = params.outer_length
     width = params.outer_width
     checks = [
@@ -91,7 +89,7 @@ def verify_assembly(params: BoxParams) -> None:
         raise ValueError("Паз получается слишком широким для выбранных габаритов.")
 
 
-def build_panels(params: BoxParams) -> list[Panel]:
+def build_panels(params):
     validate_params(params)
     verify_assembly(params)
 
@@ -135,7 +133,7 @@ def build_panels(params: BoxParams) -> list[Panel]:
     return panels
 
 
-def bottom_panel(params: BoxParams, x: float, y: float) -> list[Segment]:
+def bottom_panel(params, x, y):
     length = params.outer_length
     width = params.outer_width
     segments = rounded_rect_segments(x, y, length, width, params.corner_radius)
@@ -151,7 +149,7 @@ def bottom_panel(params: BoxParams, x: float, y: float) -> list[Segment]:
     return segments
 
 
-def lid_panel(params: BoxParams, x: float, y: float) -> list[Segment]:
+def lid_panel(params, x, y):
     length = params.outer_length
     width = params.outer_width
     segments = rounded_rect_segments(x, y, length, width, params.corner_radius)
@@ -160,7 +158,7 @@ def lid_panel(params: BoxParams, x: float, y: float) -> list[Segment]:
     return segments
 
 
-def front_back_wall_panel(params: BoxParams, x: float, y: float) -> list[Segment]:
+def front_back_wall_panel(params, x, y):
     length = params.outer_length
     height = params.inner_height
     segments = tabbed_panel_outline(params, x, y, length, height, bottom_tab_intervals(params, length))
@@ -176,7 +174,7 @@ def front_back_wall_panel(params: BoxParams, x: float, y: float) -> list[Segment
     return segments
 
 
-def side_wall_panel(params: BoxParams, x: float, y: float) -> list[Segment]:
+def side_wall_panel(params, x, y):
     width = params.inner_width
     height = params.inner_height
     side_tabs = vertical_tab_intervals(params)
@@ -194,7 +192,7 @@ def side_wall_panel(params: BoxParams, x: float, y: float) -> list[Segment]:
     return segments
 
 
-def add_wall_holes(segments: list[Segment], params: BoxParams, x: float, y: float, width: float, height: float) -> None:
+def add_wall_holes(segments, params, x, y, width, height):
     if width < 60 or height < 35:
         return
 
@@ -205,14 +203,7 @@ def add_wall_holes(segments: list[Segment], params: BoxParams, x: float, y: floa
     segments.append(Segment("circle", (x + width - side_margin, y + height - top_margin, r)))
 
 
-def add_slots(
-    segments: list[Segment],
-    x: float,
-    y: float,
-    intervals: list[tuple[float, float]],
-    orientation: str,
-    params: BoxParams,
-) -> None:
+def add_slots(segments, x, y, intervals, orientation, params):
     for start, end in intervals:
         slot_len = max(end - start - params.kerf, 3.0)
         offset = start + params.kerf / 2
@@ -222,14 +213,22 @@ def add_slots(
             segments.extend(rect_segments(x, y + offset, params.slot_width, slot_len))
 
 
-def add_mounting_holes(segments: list[Segment], params: BoxParams, x: float, y: float, width: float, height: float) -> None:
+def add_mounting_holes(segments, params, x, y, width, height):
     r = params.hole_diameter / 2
     m = params.hole_margin
-    for hx, hy in [(x + m, y + m), (x + width - m, y + m), (x + m, y + height - m), (x + width - m, y + height - m)]:
+
+    holes = [
+        (x + m, y + m),
+        (x + width - m, y + m),
+        (x + m, y + height - m),
+        (x + width - m, y + height - m),
+    ]
+
+    for hx, hy in holes:
         segments.append(Segment("circle", (hx, hy, r)))
 
 
-def add_finger_notch(segments: list[Segment], x: float, y: float, width: float, height: float) -> None:
+def add_finger_notch(segments, x, y, width, height):
     radius = height / 2
     segments.append(Segment("line", (x, y + height, x + width, y + height)))
     segments.append(Segment("arc", (x + width, y + radius, radius, 90, 270)))
@@ -238,18 +237,18 @@ def add_finger_notch(segments: list[Segment], x: float, y: float, width: float, 
 
 
 def tabbed_panel_outline(
-    params: BoxParams,
-    x: float,
-    y: float,
-    width: float,
-    height: float,
-    bottom_tabs: list[tuple[float, float]],
-    left_tabs: list[tuple[float, float]] | None = None,
-    right_tabs: list[tuple[float, float]] | None = None,
-) -> list[Segment]:
+    params,
+    x,
+    y,
+    width,
+    height,
+    bottom_tabs,
+    left_tabs=None,
+    right_tabs=None,
+):
     left_tabs = left_tabs or []
     right_tabs = right_tabs or []
-    points: list[tuple[float, float]] = [(x, y)]
+    points = [(x, y)]
     tab_depth = params.tab_depth
     cursor = 0.0
 
@@ -287,17 +286,17 @@ def tabbed_panel_outline(
     return polyline_segments(points)
 
 
-def bottom_tab_intervals(params: BoxParams, length: float) -> list[tuple[float, float]]:
+def bottom_tab_intervals(params, length):
     margin = max(params.thickness * 1.8, params.tab_width * 0.6)
     return tab_intervals(length, params.tab_width, margin)
 
 
-def vertical_tab_intervals(params: BoxParams) -> list[tuple[float, float]]:
+def vertical_tab_intervals(params):
     margin = max(params.thickness * 2.0, params.tab_width * 0.75)
     return tab_intervals(params.inner_height, params.tab_width, margin)
 
 
-def tab_intervals(length: float, tab_width: float, margin: float) -> list[tuple[float, float]]:
+def tab_intervals(length, tab_width, margin):
     usable = length - 2 * margin
     if usable < tab_width:
         center = length / 2
@@ -312,11 +311,15 @@ def tab_intervals(length: float, tab_width: float, margin: float) -> list[tuple[
         return [(start, start + tab_width)]
 
     gap = (usable - count * tab_width) / (count - 1)
-    starts = [margin + i * (tab_width + gap) for i in range(count)]
-    return [(start, start + tab_width) for start in starts]
+    intervals = []
+    for i in range(count):
+        start = margin + i * (tab_width + gap)
+        intervals.append((start, start + tab_width))
+
+    return intervals
 
 
-def rounded_rect_segments(x: float, y: float, width: float, height: float, radius: float) -> list[Segment]:
+def rounded_rect_segments(x, y, width, height, radius):
     r = min(max(radius, 0.0), width / 2, height / 2)
     if r == 0:
         return rect_segments(x, y, width, height)
@@ -333,7 +336,7 @@ def rounded_rect_segments(x: float, y: float, width: float, height: float, radiu
     ]
 
 
-def rect_segments(x: float, y: float, width: float, height: float, layer: str = "CUT") -> list[Segment]:
+def rect_segments(x, y, width, height, layer="CUT"):
     return [
         Segment("line", (x, y, x + width, y), layer),
         Segment("line", (x + width, y, x + width, y + height), layer),
@@ -342,15 +345,18 @@ def rect_segments(x: float, y: float, width: float, height: float, layer: str = 
     ]
 
 
-def polyline_segments(points: list[tuple[float, float]], layer: str = "CUT") -> list[Segment]:
-    return [
-        Segment("line", (points[i][0], points[i][1], points[i + 1][0], points[i + 1][1]), layer)
-        for i in range(len(points) - 1)
-    ]
+def polyline_segments(points, layer="CUT"):
+    segments = []
+    for i in range(len(points) - 1):
+        x1, y1 = points[i]
+        x2, y2 = points[i + 1]
+        segments.append(Segment("line", (x1, y1, x2, y2), layer))
+
+    return segments
 
 
-def segment_bounds(segments: list[Segment]) -> tuple[float, float, float, float] | None:
-    points: list[tuple[float, float]] = []
+def segment_bounds(segments):
+    points = []
     for segment in segments:
         if segment.kind == "line":
             x1, y1, x2, y2 = segment.values
@@ -359,12 +365,18 @@ def segment_bounds(segments: list[Segment]) -> tuple[float, float, float, float]
             x, y, r = segment.values
             points.extend([(x - r, y - r), (x + r, y + r)])
         elif segment.kind == "arc":
-            x, y, r, *_ = segment.values
+            x = segment.values[0]
+            y = segment.values[1]
+            r = segment.values[2]
             points.extend([(x - r, y - r), (x + r, y + r)])
 
     if not points:
         return None
 
-    xs = [p[0] for p in points]
-    ys = [p[1] for p in points]
+    xs = []
+    ys = []
+    for x, y in points:
+        xs.append(x)
+        ys.append(y)
+
     return min(xs), min(ys), max(xs), max(ys)

@@ -16,7 +16,7 @@
 
 - язык программирования Python 3;
 - библиотека `tkinter` для GUI;
-- собственная запись DXF-файла в текстовом формате без внешних зависимостей.
+- библиотека `ezdxf` для формирования DXF-файла.
 
 ## Структура проекта
 
@@ -24,7 +24,8 @@
 
 - `laser_box_generator.py` - главный файл с GUI и запуском программы;
 - `box_geometry.py` - расчёт деталей короба, шипов, пазов и отверстий;
-- `dxf_writer.py` - запись рассчитанных линий в DXF-файл;
+- `dxf_writer.py` - запись рассчитанных линий, окружностей и дуг в DXF-файл через `ezdxf`;
+- `requirements.txt` - список зависимостей проекта;
 - `tests/` - простые автоматические проверки.
 
 Такой вариант не смешивает всю программу в одном файле, но остается понятным для уровня первого курса.
@@ -75,6 +76,7 @@
 Программа проверена командой:
 
 ```bash
+python3 -m pip install -r requirements.txt
 python3 -m compileall -q laser_box_generator.py box_geometry.py dxf_writer.py tests
 python3 laser_box_generator.py --check
 python3 laser_box_generator.py --examples

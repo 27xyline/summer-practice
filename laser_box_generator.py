@@ -1,26 +1,24 @@
-from __future__ import annotations
-
 import argparse
 import math
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from box_geometry import BoxParams, Segment, build_panels, fmt, segment_bounds, validate_params, verify_assembly
-from dxf_writer import generate_dxf, write_example_files
+from box_geometry import BoxParams, build_panels, fmt, segment_bounds, validate_params, verify_assembly
+from dxf_writer import save_dxf_file, write_example_files
 
 
 APP_TITLE = "Генератор DXF монтажного короба"
 
 
 class GeneratorApp(tk.Tk):
-    def __init__(self) -> None:
+    def __init__(self):
         super().__init__()
         self.title(APP_TITLE)
         self.geometry("1120x760")
         self.minsize(980, 680)
 
-        self.values: dict[str, tk.StringVar] = {
+        self.values = {
             "inner_length": tk.StringVar(value="120"),
             "inner_width": tk.StringVar(value="80"),
             "inner_height": tk.StringVar(value="50"),
@@ -39,7 +37,7 @@ class GeneratorApp(tk.Tk):
         self.build_window()
         self.preview()
 
-    def build_window(self) -> None:
+    def build_window(self):
         root = ttk.Frame(self, padding=14)
         root.pack(fill=tk.BOTH, expand=True)
         root.columnconfigure(1, weight=1)
@@ -100,9 +98,10 @@ class GeneratorApp(tk.Tk):
 
         self.canvas = tk.Canvas(preview_frame, bg="white", highlightthickness=1, highlightbackground="#b8b8b8")
         self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.canvas.bind("<Configure>", lambda _event: self.preview())
 
-    def current_params(self) -> BoxParams:
-        numbers: dict[str, float] = {}
+    def current_params(self):
+        numbers = {}
         for key in [
             "inner_length",
             "inner_width",
@@ -132,14 +131,15 @@ class GeneratorApp(tk.Tk):
             label=self.values["label"].get().strip() or "Монтажный короб",
         )
 
-    def set_thickness(self, value: str) -> None:
+    def set_thickness(self, value):
         self.values["thickness"].set(value)
         self.preview()
 
-    def save_dxf(self) -> None:
+    def save_dxf(self):
         try:
             params = self.current_params()
-            dxf = generate_dxf(params)
+            validate_params(params)
+            verify_assembly(params)
         except Exception as exc:
             messagebox.showerror("Ошибка параметров", str(exc))
             return
@@ -152,10 +152,10 @@ class GeneratorApp(tk.Tk):
             filetypes=[("DXF files", "*.dxf"), ("All files", "*.*")],
         )
         if path:
-            Path(path).write_text(dxf, encoding="utf-8")
+            save_dxf_file(params, path)
             self.status.set(f"DXF сохранён: {path}")
 
-    def preview(self) -> None:
+    def preview(self):
         try:
             params = self.current_params()
             panels = build_panels(params)
@@ -164,7 +164,7 @@ class GeneratorApp(tk.Tk):
             return
 
         self.canvas.delete("all")
-        segments: list[Segment] = []
+        segments = []
         for panel in panels:
             segments.extend(panel.segments)
 
@@ -180,7 +180,7 @@ class GeneratorApp(tk.Tk):
         if not math.isfinite(scale) or scale <= 0:
             scale = 1.0
 
-        def map_point(px: float, py: float) -> tuple[float, float]:
+        def map_point(px, py):
             sx = margin + (px - min_x) * scale
             sy = canvas_h - margin - (py - min_y) * scale
             return sx, sy
@@ -210,7 +210,7 @@ class GeneratorApp(tk.Tk):
         self.status.set("Предпросмотр обновлён. Красные линии идут в слой CUT.")
 
 
-def check_examples() -> None:
+def check_examples():
     for thickness, kerf in [(3.0, 0.12), (4.0, 0.15)]:
         params = BoxParams(thickness=thickness, kerf=kerf)
         validate_params(params)
@@ -218,7 +218,7 @@ def check_examples() -> None:
         print(f"OK: {fmt(thickness)} мм, рез {fmt(kerf)} мм")
 
 
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser(description="Генератор DXF монтажного короба для лазерной резки.")
     parser.add_argument("--examples", action="store_true", help="создать DXF-примеры в output/dxf")
     parser.add_argument("--check", action="store_true", help="проверить шипы и пазы для 3 и 4 мм")

@@ -8,13 +8,20 @@
 
 - `laser_box_generator.py` - главный файл: GUI, запуск, кнопки, командная строка.
 - `box_geometry.py` - расчёт размеров, шипов, пазов, отверстий и панелей.
-- `dxf_writer.py` - запись результата в DXF-файл.
+- `dxf_writer.py` - запись результата в DXF-файл через `ezdxf`.
+- `requirements.txt` - зависимости проекта.
 - `tests/` - простые автоматические проверки.
 - `output/dxf/montazhny_korob_3mm.dxf` - пример чертежа для фанеры 3 мм.
 - `output/dxf/montazhny_korob_4mm.dxf` - пример чертежа для фанеры 4 мм.
 - `docs/report.md` - текст отчета.
 
 ## Запуск
+
+Установите зависимости:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
 
 ```bash
 python3 laser_box_generator.py

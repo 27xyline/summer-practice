@@ -1,138 +1,62 @@
-from __future__ import annotations
+import ezdxf
 
-from pathlib import Path
-
-from box_geometry import BoxParams, Segment, build_panels, fmt, validate_params, verify_assembly
+from box_geometry import BoxParams, build_panels, fmt, validate_params, verify_assembly
 
 
-class DxfDocument:
-    def __init__(self) -> None:
-        self.entities: list[str] = []
+def add_layer(document, layer):
+    if not document.layers.has_entry(layer):
+        document.layers.new(name=layer, dxfattribs={"color": 1})
 
-    def line(self, x1: float, y1: float, x2: float, y2: float, layer: str = "CUT") -> None:
-        self.entities.append(
-            "\n".join(
-                [
-                    "0",
-                    "LINE",
-                    "8",
-                    layer,
-                    "10",
-                    fmt(x1),
-                    "20",
-                    fmt(y1),
-                    "30",
-                    "0",
-                    "11",
-                    fmt(x2),
-                    "21",
-                    fmt(y2),
-                    "31",
-                    "0",
-                ]
-            )
+
+def add_segment(document, modelspace, segment):
+    add_layer(document, segment.layer)
+
+    if segment.kind == "line":
+        x1, y1, x2, y2 = segment.values
+        modelspace.add_line((x1, y1, 0), (x2, y2, 0), dxfattribs={"layer": segment.layer})
+    elif segment.kind == "circle":
+        x, y, radius = segment.values
+        modelspace.add_circle((x, y, 0), radius=radius, dxfattribs={"layer": segment.layer})
+    elif segment.kind == "arc":
+        x, y, radius, start_angle, end_angle = segment.values
+        modelspace.add_arc(
+            center=(x, y, 0),
+            radius=radius,
+            start_angle=start_angle,
+            end_angle=end_angle,
+            dxfattribs={"layer": segment.layer},
         )
-
-    def circle(self, x: float, y: float, radius: float, layer: str = "CUT") -> None:
-        self.entities.append(
-            "\n".join(["0", "CIRCLE", "8", layer, "10", fmt(x), "20", fmt(y), "30", "0", "40", fmt(radius)])
-        )
-
-    def arc(self, x: float, y: float, radius: float, start_angle: float, end_angle: float, layer: str = "CUT") -> None:
-        self.entities.append(
-            "\n".join(
-                [
-                    "0",
-                    "ARC",
-                    "8",
-                    layer,
-                    "10",
-                    fmt(x),
-                    "20",
-                    fmt(y),
-                    "30",
-                    "0",
-                    "40",
-                    fmt(radius),
-                    "50",
-                    fmt(start_angle),
-                    "51",
-                    fmt(end_angle),
-                ]
-            )
-        )
-
-    def add_segments(self, segments: list[Segment]) -> None:
-        for segment in segments:
-            if segment.kind == "line":
-                self.line(*segment.values, layer=segment.layer)
-            elif segment.kind == "circle":
-                self.circle(*segment.values, layer=segment.layer)
-            elif segment.kind == "arc":
-                self.arc(*segment.values, layer=segment.layer)
-            else:
-                raise ValueError(f"Неизвестный тип линии: {segment.kind}")
-
-    def to_string(self) -> str:
-        return "\n".join(
-            [
-                "0",
-                "SECTION",
-                "2",
-                "HEADER",
-                "9",
-                "$INSUNITS",
-                "70",
-                "4",
-                "0",
-                "ENDSEC",
-                "0",
-                "SECTION",
-                "2",
-                "TABLES",
-                self.layers_table(),
-                "0",
-                "ENDSEC",
-                "0",
-                "SECTION",
-                "2",
-                "ENTITIES",
-                *self.entities,
-                "0",
-                "ENDSEC",
-                "0",
-                "EOF",
-                "",
-            ]
-        )
-
-    @staticmethod
-    def layers_table() -> str:
-        layers = [("CUT", 1)]
-        lines = ["0", "TABLE", "2", "LAYER", "70", str(len(layers))]
-        for name, color in layers:
-            lines.extend(["0", "LAYER", "2", name, "70", "0", "62", str(color), "6", "CONTINUOUS"])
-        lines.extend(["0", "ENDTAB"])
-        return "\n".join(lines)
+    else:
+        raise ValueError(f"Неизвестный тип линии: {segment.kind}")
 
 
-def generate_dxf(params: BoxParams) -> str:
+def create_dxf_document(params):
     validate_params(params)
     verify_assembly(params)
 
-    doc = DxfDocument()
+    document = ezdxf.new("R2010")
+    document.header["$INSUNITS"] = 4
+    modelspace = document.modelspace()
+    add_layer(document, "CUT")
+
     for panel in build_panels(params):
-        doc.add_segments(panel.segments)
+        for segment in panel.segments:
+            add_segment(document, modelspace, segment)
 
-    return doc.to_string()
+    return document
 
 
-def write_example_files(output_dir: Path) -> list[Path]:
+def save_dxf_file(params, path):
+    document = create_dxf_document(params)
+    document.saveas(path)
+
+
+def write_example_files(output_dir):
     output_dir.mkdir(parents=True, exist_ok=True)
-    paths: list[Path] = []
+    paths = []
     for thickness, kerf in [(3.0, 0.12), (4.0, 0.15)]:
         params = BoxParams(thickness=thickness, kerf=kerf)
         path = output_dir / f"montazhny_korob_{fmt(thickness)}mm.dxf"
-        path.write_text(generate_dxf(params), encoding="utf-8")
+        save_dxf_file(params, path)
         paths.append(path)
     return paths
