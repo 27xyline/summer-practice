@@ -1,6 +1,6 @@
 import unittest
 
-from box_geometry import BoxParams, build_panels, rectangular_hole_sizes, segment_bounds, verify_assembly
+from box_geometry import BoxParams, build_panels, joint_line_sizes, rectangular_hole_sizes, segment_bounds, verify_assembly
 from dxf_writer import create_dxf_document
 
 
@@ -63,28 +63,14 @@ class BoxGeneratorTests(unittest.TestCase):
         self.assertGreater(found, 10)
         self.assertEqual(expected, [3.1, 6.1])
 
-    def test_joint_sizes_are_only_six(self):
+    def test_finger_joints_have_assembly_clearance(self):
         params = BoxParams(clearance=0.1)
-        sizes = []
+        sizes = [round(size, 1) for size in joint_line_sizes(params)]
 
-        for panel in build_panels(params):
-            for segment in panel.segments:
-                if segment.layer != "CUT" or segment.kind != "line":
-                    continue
-                x1, y1, x2, y2 = segment.values
-                dx = abs(x2 - x1)
-                dy = abs(y2 - y1)
-                if dx < 0.001 and 5.5 <= dy <= 6.5:
-                    sizes.append(round(dy, 1))
-                elif dy < 0.001 and 5.5 <= dx <= 6.5:
-                    sizes.append(round(dx, 1))
-
+        self.assertIn(round(params.finger_width - params.clearance, 1), sizes)
         self.assertIn(6.0, sizes)
-        self.assertNotIn(6.1, sizes)
-        self.assertNotIn(5.9, sizes)
-        self.assertNotIn(6.2, sizes)
-        for size in sizes:
-            self.assertEqual(size, 6.0)
+        self.assertIn(round(params.finger_width + params.clearance, 1), sizes)
+        self.assertGreater(sizes.count(round(params.finger_width + params.clearance, 1)), 10)
 
     def test_has_cut_and_hole_geometry(self):
         cut = 0

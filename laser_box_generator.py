@@ -83,7 +83,7 @@ class GeneratorApp(tk.Tk):
         if path.suffix.lower() != extension:
             path = path.with_suffix(extension)
         if not path.is_absolute():
-            path = Path("output/dxf") / path
+            path = Path("output") / path
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -130,7 +130,7 @@ def check_examples():
 
 def main():
     if "--examples" in sys.argv:
-        files = write_example_files(Path("output/dxf"))
+        files = write_example_files(Path("output"))
         for path in files:
             print(path)
         return

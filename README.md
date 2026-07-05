@@ -11,9 +11,8 @@
 - `dxf_writer.py` - запись DXF через `ezdxf`.
 - `svg_writer.py` - запись SVG.
 - `assets/ElectronicsBox.svg` - образец внешнего вида.
-- `output/dxf/electronics_box.dxf` - готовый пример DXF.
+- `output/electronics_box.dxf` - готовый пример DXF.
 - `tests/` - автоматические проверки.
-- `docs/report.md` - текст отчета.
 
 ## Запуск
 
@@ -28,7 +27,7 @@ python3 laser_box_generator.py
 python3 laser_box_generator.py --examples
 ```
 
-Команда создаст файл `output/dxf/electronics_box.dxf`.
+Команда создаст файл `output/electronics_box.dxf`.
 
 ## Проверка
 
@@ -52,4 +51,4 @@ python3 -m unittest discover -s tests
 
 В DXF используются миллиметры. Основной контур находится в слое `CUT`, отверстия и пазы находятся в слое `HOLES`. Текста в DXF нет.
 
-По умолчанию шип имеет размер `6 x 3 мм`, а прямоугольный паз имеет размер `6.1 x 3.1 мм`.
+По умолчанию шип имеет размер `6 x 3 мм`, а ответные участки пальцевого соединения и прямоугольные пазы увеличиваются на зазор `0.1 мм`. Прямоугольный паз получается `6.1 x 3.1 мм`.

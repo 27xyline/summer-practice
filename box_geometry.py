@@ -60,6 +60,10 @@ def query_fmt(value):
     return f"{value:.4f}".rstrip("0").rstrip(".")
 
 
+def finger_joint_play(params):
+    return params.clearance / params.thickness
+
+
 def validate_params(params):
     values = [
         ("Длина", params.length),
@@ -82,6 +86,8 @@ def validate_params(params):
 
     if params.clearance < 0:
         raise ValueError("Зазор не может быть отрицательным")
+    if params.clearance >= params.finger_width:
+        raise ValueError("Зазор должен быть меньше ширины шипа")
     if params.thickness < 2 or params.thickness > 6:
         raise ValueError("Толщина материала должна быть от 2 до 6 мм")
     if params.finger_width < params.thickness or params.finger_width > 20:
@@ -120,6 +126,7 @@ def verify_assembly(params):
     if layout_h > params.sheet_height + 0.001:
         raise ValueError(f"Раскладка выше листа: {fmt(layout_h)} мм > {fmt(params.sheet_height)} мм")
 
+    check_joint_clearance(params, panels)
     check_slot_sizes(params)
 
 
@@ -173,7 +180,7 @@ def download_svg(params):
         "FingerJoint_edge_width": "1.0",
         "FingerJoint_extra_length": "0.0",
         "FingerJoint_finger": query_fmt(params.finger_width / params.thickness),
-        "FingerJoint_play": "0",
+        "FingerJoint_play": query_fmt(finger_joint_play(params)),
         "FingerJoint_space": query_fmt(params.finger_width / params.thickness),
         "FingerJoint_width": "1.0",
         "x": query_fmt(params.length),
@@ -260,6 +267,44 @@ def check_slot_sizes(params):
         if current == expected:
             return
     raise ValueError("Пазы не стали больше шипов на заданный зазор")
+
+
+def check_joint_clearance(params, panels):
+    if params.clearance <= 0:
+        return
+
+    expected = params.finger_width + params.clearance
+    for size in joint_line_sizes(params, panels):
+        if abs(size - expected) <= 0.05:
+            return
+    raise ValueError("Пальцевые соединения не получили заданный зазор")
+
+
+def joint_line_sizes(params, panels=None):
+    if panels is None:
+        panels = build_panels(params)
+
+    sizes = []
+    min_size = max(0, params.finger_width - params.clearance - 0.2)
+    max_size = params.finger_width + params.clearance + 0.2
+
+    for panel in panels:
+        for segment in panel.segments:
+            if segment.layer != "CUT" or segment.kind != "line":
+                continue
+            x1, y1, x2, y2 = segment.values
+            dx = abs(x2 - x1)
+            dy = abs(y2 - y1)
+            length = None
+            if dx < 0.001:
+                length = dy
+            elif dy < 0.001:
+                length = dx
+
+            if length is not None and min_size <= length <= max_size:
+                sizes.append(length)
+
+    return sizes
 
 
 def rectangular_hole_sizes(params):
