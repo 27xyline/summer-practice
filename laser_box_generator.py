@@ -1,137 +1,120 @@
-import math
 import sys
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
 from box_geometry import BoxParams, build_panels, fmt, segment_bounds, validate_params, verify_assembly
 from dxf_writer import save_dxf_file, write_example_files
+from svg_writer import save_svg_file
 
 
-APP_TITLE = "ElectronicsBox DXF"
+APP_TITLE = "ElectronicsBox — генератор DXF и SVG"
 
 
 class GeneratorApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("900x720")
-        self.minsize(780, 620)
-        self.status = tk.StringVar(value="Готово")
+        self.geometry("560x420")
+        self.resizable(False, False)
+        self.length_var = tk.StringVar(value="100.0")
+        self.depth_var = tk.StringVar(value="100.0")
+        self.height_var = tk.StringVar(value="100.0")
+        self.thickness_var = tk.StringVar(value="3.0")
+        self.finger_var = tk.StringVar(value="6.0")
+        self.clearance_var = tk.StringVar(value="0.1")
+        self.file_var = tk.StringVar(value="electronics_box.dxf")
+        self.status = tk.StringVar(value="")
         self.make_window()
-        self.preview()
 
     def make_window(self):
-        main = ttk.Frame(self, padding=12)
+        main = ttk.Frame(self, padding=24)
         main.pack(fill=tk.BOTH, expand=True)
         main.columnconfigure(1, weight=1)
-        main.rowconfigure(0, weight=1)
 
-        left = ttk.Frame(main)
-        left.grid(row=0, column=0, sticky="nsw", padx=(0, 12))
+        ttk.Label(main, text="Коробка ElectronicsBox", font=("TkDefaultFont", 16, "bold")).grid(row=0, column=0, columnspan=2, pady=(0, 18))
 
-        right = ttk.Frame(main)
-        right.grid(row=0, column=1, sticky="nsew")
-        right.columnconfigure(0, weight=1)
-        right.rowconfigure(0, weight=1)
+        rows = [
+            ("Длина (внутренняя ширина), мм", self.length_var),
+            ("Глубина (внутренняя глубина), мм", self.depth_var),
+            ("Высота (внутренняя высота), мм", self.height_var),
+            ("Толщина материала, мм", self.thickness_var),
+            ("Ширина шипа, мм", self.finger_var),
+            ("Зазор шип-паз, мм", self.clearance_var),
+            ("Имя выходного файла", self.file_var),
+        ]
 
-        ttk.Label(left, text=APP_TITLE, font=("TkDefaultFont", 14, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 12))
-        ttk.Label(left, text="Размер коробки: 100 x 100 x 100 мм").grid(row=1, column=0, sticky="w", pady=3)
-        ttk.Label(left, text="Материал: фанера 3 мм").grid(row=2, column=0, sticky="w", pady=3)
-        ttk.Label(left, text="Габарит раскладки: 221.9 x 452.2 мм").grid(row=3, column=0, sticky="w", pady=3)
-        ttk.Button(left, text="Обновить", command=self.preview).grid(row=4, column=0, sticky="ew", pady=(14, 3))
-        ttk.Button(left, text="Сохранить DXF", command=self.save_file).grid(row=5, column=0, sticky="ew", pady=3)
-        ttk.Label(left, textvariable=self.status, wraplength=230, foreground="#245070").grid(row=6, column=0, sticky="w", pady=(12, 0))
+        for row, data in enumerate(rows, start=1):
+            title, variable = data
+            ttk.Label(main, text=title).grid(row=row, column=0, sticky="w", pady=5, padx=(0, 18))
+            ttk.Entry(main, textvariable=variable).grid(row=row, column=1, sticky="ew", pady=5)
 
-        self.canvas = tk.Canvas(right, bg="white", highlightthickness=1, highlightbackground="#aaaaaa")
-        self.canvas.grid(row=0, column=0, sticky="nsew")
-        self.canvas.bind("<Configure>", lambda event: self.preview())
+        buttons = ttk.Frame(main)
+        buttons.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(18, 8))
+        buttons.columnconfigure(0, weight=1)
+        buttons.columnconfigure(1, weight=1)
+
+        ttk.Button(buttons, text="Сгенерировать DXF", command=self.generate_dxf).grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        ttk.Button(buttons, text="Сгенерировать SVG", command=self.generate_svg).grid(row=0, column=1, sticky="ew", padx=(8, 0))
+        ttk.Label(main, textvariable=self.status, foreground="#245070").grid(row=9, column=0, columnspan=2, sticky="w")
 
     def get_params(self):
-        return BoxParams()
-
-    def save_file(self):
-        try:
-            params = self.get_params()
-            validate_params(params)
-            verify_assembly(params)
-        except Exception as error:
-            messagebox.showerror("Ошибка", str(error))
-            return
-
-        path = filedialog.asksaveasfilename(
-            title="Сохранить DXF",
-            defaultextension=".dxf",
-            initialfile="electronics_box.dxf",
-            filetypes=[("DXF", "*.dxf"), ("Все файлы", "*.*")],
+        return BoxParams(
+            self.read_number(self.length_var.get(), "Длина"),
+            self.read_number(self.depth_var.get(), "Глубина"),
+            self.read_number(self.height_var.get(), "Высота"),
+            self.read_number(self.thickness_var.get(), "Толщина материала"),
+            self.read_number(self.finger_var.get(), "Ширина шипа"),
+            self.read_number(self.clearance_var.get(), "Зазор"),
         )
 
-        if path:
-            save_dxf_file(params, path)
-            self.status.set(f"Файл сохранён: {path}")
+    def read_number(self, text, name):
+        try:
+            return float(text.replace(",", "."))
+        except ValueError:
+            raise ValueError(f"{name} указана неправильно")
 
-    def preview(self):
+    def output_path(self, extension):
+        name = self.file_var.get().strip()
+        if not name:
+            name = "electronics_box.dxf"
+
+        path = Path(name)
+        if path.suffix.lower() != extension:
+            path = path.with_suffix(extension)
+        if not path.is_absolute():
+            path = Path("output/dxf") / path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def generate_dxf(self):
         try:
             params = self.get_params()
-            panels = build_panels(params)
+            verify_assembly(params)
+            path = self.output_path(".dxf")
+            save_dxf_file(params, path)
+            self.show_result(params, path)
         except Exception as error:
-            self.status.set(f"Ошибка: {error}")
-            return
+            messagebox.showerror("Ошибка", str(error))
 
-        self.canvas.delete("all")
+    def generate_svg(self):
+        try:
+            params = self.get_params()
+            verify_assembly(params)
+            path = self.output_path(".svg")
+            save_svg_file(params, path)
+            self.show_result(params, path)
+        except Exception as error:
+            messagebox.showerror("Ошибка", str(error))
 
+    def show_result(self, params, path):
         segments = []
-        for panel in panels:
+        for panel in build_panels(params):
             segments.extend(panel.segments)
-
-        bounds = segment_bounds(segments)
-        if bounds is None:
-            return
-
-        min_x, min_y, max_x, max_y = bounds
-        canvas_w = max(1, self.canvas.winfo_width())
-        canvas_h = max(1, self.canvas.winfo_height())
-        margin = 30
-        scale_x = (canvas_w - margin * 2) / (max_x - min_x)
-        scale_y = (canvas_h - margin * 2) / (max_y - min_y)
-        scale = min(scale_x, scale_y)
-
-        if not math.isfinite(scale) or scale <= 0:
-            scale = 1
-
-        def point(x, y):
-            px = margin + (x - min_x) * scale
-            py = canvas_h - margin - (y - min_y) * scale
-            return px, py
-
-        for segment in segments:
-            color = "#111111"
-            if segment.layer == "HOLES":
-                color = "#0046ff"
-            elif segment.layer == "TEXT":
-                color = "#d00000"
-
-            if segment.kind == "line":
-                x1, y1, x2, y2 = segment.values
-                self.canvas.create_line(*point(x1, y1), *point(x2, y2), fill=color, width=1.2)
-            elif segment.kind == "circle":
-                x, y, r = segment.values
-                x1, y1 = point(x - r, y - r)
-                x2, y2 = point(x + r, y + r)
-                self.canvas.create_oval(x1, y1, x2, y2, outline=color, width=1.2)
-            elif segment.kind == "arc":
-                x, y, r, a1, a2 = segment.values
-                x1, y1 = point(x - r, y - r)
-                x2, y2 = point(x + r, y + r)
-                angle = a2 - a1
-                if angle <= 0:
-                    angle = angle + 360
-                self.canvas.create_arc(x1, y1, x2, y2, start=-a1, extent=-angle, style=tk.ARC, outline=color, width=1.2)
-            elif segment.kind == "text":
-                x, y, text, size = segment.values
-                self.canvas.create_text(*point(x, y), text=text, anchor="sw", fill=color, font=("TkDefaultFont", max(6, int(size * scale))))
-
-        self.status.set("Предпросмотр готов")
+        min_x, min_y, max_x, max_y = segment_bounds(segments)
+        text = f"Готово: {path} ({fmt(max_x - min_x)} x {fmt(max_y - min_y)} мм)"
+        self.status.set(text)
+        messagebox.showinfo("Готово", text)
 
 
 def check_examples():

@@ -4,13 +4,13 @@ from box_geometry import BoxParams, build_panels, validate_params, verify_assemb
 
 
 def add_layer(doc, name):
-    colors = {"CUT": 250, "HOLES": 5, "TEXT": 1}
+    colors = {"CUT": 250, "HOLES": 5}
     if not doc.layers.has_entry(name):
         doc.layers.new(name=name, dxfattribs={"color": colors.get(name, 7)})
 
 
 def layer_color(layer):
-    colors = {"CUT": 250, "HOLES": 5, "TEXT": 1}
+    colors = {"CUT": 250, "HOLES": 5}
     return colors.get(layer, 7)
 
 
@@ -27,10 +27,10 @@ def add_segment(doc, msp, segment):
     elif segment.kind == "arc":
         x, y, r, a1, a2 = segment.values
         msp.add_arc((x, y, 0), r, a1, a2, dxfattribs={"layer": segment.layer, "color": color})
-    elif segment.kind == "text":
-        x, y, text, size = segment.values
-        item = msp.add_text(text, dxfattribs={"height": size, "layer": segment.layer, "color": color})
-        item.dxf.insert = (x, y, 0)
+    elif segment.kind == "rect":
+        x, y, w, h = segment.values
+        points = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+        msp.add_lwpolyline(points, close=True, dxfattribs={"layer": segment.layer, "color": color})
 
 
 def create_dxf_document(params):
@@ -43,7 +43,7 @@ def create_dxf_document(params):
     doc.units = 4
     msp = doc.modelspace()
 
-    for name in ["CUT", "HOLES", "TEXT"]:
+    for name in ["CUT", "HOLES"]:
         add_layer(doc, name)
 
     for panel in build_panels(params):

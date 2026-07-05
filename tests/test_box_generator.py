@@ -1,22 +1,17 @@
 import unittest
 
-from box_geometry import BoxParams, build_panels, segment_bounds, verify_assembly
+from box_geometry import BoxParams, build_panels, rectangular_hole_sizes, segment_bounds, verify_assembly
 from dxf_writer import create_dxf_document
 
 
 class BoxGeneratorTests(unittest.TestCase):
-    def test_reads_svg_panels(self):
+    def test_builds_electronics_box_parts(self):
         panels = build_panels(BoxParams())
-        names = []
-        for panel in panels:
-            names.append(panel.title)
 
         self.assertEqual(len(panels), 7)
-        self.assertIn("Top", names)
-        self.assertIn("Bottom", names)
-        self.assertIn("Wall 1", names)
+        self.assertGreater(sum(len(panel.segments) for panel in panels), 2500)
 
-    def test_dxf_has_layers_and_objects(self):
+    def test_dxf_has_no_text(self):
         doc = create_dxf_document(BoxParams())
         objects = []
         for item in doc.modelspace():
@@ -24,23 +19,74 @@ class BoxGeneratorTests(unittest.TestCase):
 
         self.assertEqual(doc.header["$INSUNITS"], 4)
         self.assertIn("LINE", objects)
-        self.assertIn("TEXT", objects)
+        self.assertNotIn("TEXT", objects)
         self.assertTrue(doc.layers.has_entry("CUT"))
         self.assertTrue(doc.layers.has_entry("HOLES"))
-        self.assertTrue(doc.layers.has_entry("TEXT"))
+        self.assertFalse(doc.layers.has_entry("TEXT"))
 
-    def test_layout_size_is_like_svg(self):
+    def test_default_layout_is_like_electronics_box_svg(self):
+        params = BoxParams()
         segments = []
-        for panel in build_panels(BoxParams()):
+        for panel in build_panels(params):
             segments.extend(panel.segments)
 
         min_x, min_y, max_x, max_y = segment_bounds(segments)
         self.assertGreaterEqual(min_x, 0)
         self.assertGreaterEqual(min_y, 0)
-        self.assertAlmostEqual(max_x - min_x, 201.9, places=1)
-        self.assertAlmostEqual(max_y - min_y, 432.2, places=1)
+        self.assertLessEqual(max_x - min_x, params.sheet_width)
+        self.assertLessEqual(max_y - min_y, params.sheet_height)
+        self.assertAlmostEqual(max_x - min_x, 201.5, places=1)
+        self.assertAlmostEqual(max_y - min_y, 431, places=1)
 
-    def test_has_cut_and_hole_lines(self):
+    def test_can_change_size_and_thickness(self):
+        for params in [BoxParams(80, 70, 60, 4), BoxParams(100, 100, 100, 4)]:
+            verify_assembly(params)
+            segments = []
+            for panel in build_panels(params):
+                segments.extend(panel.segments)
+
+            min_x, min_y, max_x, max_y = segment_bounds(segments)
+            self.assertLessEqual(max_x - min_x, params.sheet_width)
+            self.assertLessEqual(max_y - min_y, params.sheet_height)
+
+    def test_slots_are_larger_than_teeth(self):
+        params = BoxParams(clearance=0.1)
+        sizes = rectangular_hole_sizes(params)
+        expected = sorted([round(params.finger_width + params.clearance, 1), round(params.thickness + params.clearance, 1)])
+        found = 0
+
+        for width, height in sizes:
+            current = sorted([round(width, 1), round(height, 1)])
+            if current == expected:
+                found += 1
+
+        self.assertGreater(found, 10)
+        self.assertEqual(expected, [3.1, 6.1])
+
+    def test_joint_sizes_are_only_six(self):
+        params = BoxParams(clearance=0.1)
+        sizes = []
+
+        for panel in build_panels(params):
+            for segment in panel.segments:
+                if segment.layer != "CUT" or segment.kind != "line":
+                    continue
+                x1, y1, x2, y2 = segment.values
+                dx = abs(x2 - x1)
+                dy = abs(y2 - y1)
+                if dx < 0.001 and 5.5 <= dy <= 6.5:
+                    sizes.append(round(dy, 1))
+                elif dy < 0.001 and 5.5 <= dx <= 6.5:
+                    sizes.append(round(dx, 1))
+
+        self.assertIn(6.0, sizes)
+        self.assertNotIn(6.1, sizes)
+        self.assertNotIn(5.9, sizes)
+        self.assertNotIn(6.2, sizes)
+        for size in sizes:
+            self.assertEqual(size, 6.0)
+
+    def test_has_cut_and_hole_geometry(self):
         cut = 0
         holes = 0
         for panel in build_panels(BoxParams()):
@@ -50,14 +96,22 @@ class BoxGeneratorTests(unittest.TestCase):
                 elif segment.layer == "HOLES":
                     holes += 1
 
-        self.assertGreater(cut, 100)
+        self.assertGreater(cut, 500)
         self.assertGreater(holes, 100)
+
+    def test_rejects_too_small_box(self):
+        with self.assertRaises(ValueError):
+            verify_assembly(BoxParams(30, 100, 100, 3))
+
+    def test_rejects_too_large_layout(self):
+        with self.assertRaises(ValueError):
+            verify_assembly(BoxParams(140, 140, 140, 3))
 
     def test_no_double_cut_lines(self):
         lines = {}
         for panel in build_panels(BoxParams()):
             for segment in panel.segments:
-                if segment.kind == "line":
+                if segment.layer == "CUT" and segment.kind == "line":
                     x1, y1, x2, y2 = segment.values
                     p1 = (round(x1, 4), round(y1, 4))
                     p2 = (round(x2, 4), round(y2, 4))

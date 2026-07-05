@@ -1,16 +1,40 @@
 import math
 import re
+import ssl
 from pathlib import Path
+from urllib.parse import urlencode
+from urllib.request import urlopen
 from xml.etree import ElementTree
 
 
 SVG_FILE = Path(__file__).parent / "assets" / "ElectronicsBox.svg"
+SERVICE_URL = "https://box.laserbiz.ru/site.wsgi/ElectronicsBox"
+SVG_CACHE = {}
 
 
 class BoxParams:
-    def __init__(self, svg_file=SVG_FILE, label="ElectronicsBox"):
-        self.svg_file = Path(svg_file)
-        self.label = label
+    def __init__(
+        self,
+        length=100,
+        depth=100,
+        height=100,
+        thickness=3,
+        finger_width=6,
+        clearance=0.1,
+        sheet_width=230,
+        sheet_height=460,
+        svg_file=None,
+    ):
+        self.length = float(length)
+        self.depth = float(depth)
+        self.width = float(depth)
+        self.height = float(height)
+        self.thickness = float(thickness)
+        self.finger_width = float(finger_width)
+        self.clearance = float(clearance)
+        self.sheet_width = float(sheet_width)
+        self.sheet_height = float(sheet_height)
+        self.svg_file = Path(svg_file) if svg_file else None
 
 
 class Segment:
@@ -29,12 +53,49 @@ class Panel:
 
 
 def fmt(value):
+    return f"{value:.1f}".rstrip("0").rstrip(".")
+
+
+def query_fmt(value):
     return f"{value:.4f}".rstrip("0").rstrip(".")
 
 
 def validate_params(params):
-    if not params.svg_file.exists():
-        raise ValueError("Не найден файл образца SVG")
+    values = [
+        ("Длина", params.length),
+        ("Глубина", params.depth),
+        ("Высота", params.height),
+        ("Толщина материала", params.thickness),
+        ("Ширина шипа", params.finger_width),
+        ("Зазор", params.clearance),
+        ("Ширина листа", params.sheet_width),
+        ("Высота листа", params.sheet_height),
+    ]
+
+    for name, value in values:
+        if not math.isfinite(value):
+            raise ValueError(f"{name} указана неправильно")
+
+    for name, value in values[:5] + values[6:]:
+        if value <= 0:
+            raise ValueError(f"{name} должна быть положительным числом")
+
+    if params.clearance < 0:
+        raise ValueError("Зазор не может быть отрицательным")
+    if params.thickness < 2 or params.thickness > 6:
+        raise ValueError("Толщина материала должна быть от 2 до 6 мм")
+    if params.finger_width < params.thickness or params.finger_width > 20:
+        raise ValueError("Ширина шипа должна быть от толщины материала до 20 мм")
+
+    min_side = max(45, params.thickness * 12, params.finger_width * 5)
+    min_height = max(35, params.thickness * 10, params.finger_width * 5)
+
+    if params.length < min_side:
+        raise ValueError(f"Длина должна быть не меньше {fmt(min_side)} мм")
+    if params.depth < min_side:
+        raise ValueError(f"Глубина должна быть не меньше {fmt(min_side)} мм")
+    if params.height < min_height:
+        raise ValueError(f"Высота должна быть не меньше {fmt(min_height)} мм")
 
 
 def verify_assembly(params):
@@ -46,18 +107,25 @@ def verify_assembly(params):
 
     bounds = segment_bounds(segments)
     if bounds is None:
-        raise ValueError("В образце нет линий")
+        raise ValueError("В чертеже нет линий")
 
     min_x, min_y, max_x, max_y = bounds
-    if min_x < 0 or min_y < 0:
+    if min_x < -0.001 or min_y < -0.001:
         raise ValueError("Чертеж выходит в отрицательные координаты")
-    if max_x - min_x > 230 or max_y - min_y > 460:
-        raise ValueError("Чертеж больше ожидаемого листа")
+
+    layout_w = max_x - min_x
+    layout_h = max_y - min_y
+    if layout_w > params.sheet_width + 0.001:
+        raise ValueError(f"Раскладка шире листа: {fmt(layout_w)} мм > {fmt(params.sheet_width)} мм")
+    if layout_h > params.sheet_height + 0.001:
+        raise ValueError(f"Раскладка выше листа: {fmt(layout_h)} мм > {fmt(params.sheet_height)} мм")
+
+    check_slot_sizes(params)
 
 
 def build_panels(params):
     validate_params(params)
-    root = ElementTree.parse(params.svg_file).getroot()
+    root = ElementTree.fromstring(load_svg_text(params))
     width, height = svg_size(root)
     panels = []
 
@@ -72,19 +140,146 @@ def build_panels(params):
                     segments.extend(path_segments(item.attrib.get("d", ""), height, layer))
                 elif name == "text":
                     title = (item.text or title).strip()
-                    segments.append(text_segment(item, height))
 
-            panels.append(Panel(title, 0, 0, segments))
-
-    if not panels:
-        segments = []
-        for item in root.iter():
-            if tag_name(item.tag) == "path":
-                layer = layer_by_color(item.attrib.get("stroke", ""))
-                segments.extend(path_segments(item.attrib.get("d", ""), height, layer))
-        panels.append(Panel(params.label, 0, 0, segments))
+            if segments:
+                panels.append(Panel(title, 0, 0, segments))
 
     return panels
+
+
+def load_svg_text(params):
+    if params.svg_file:
+        return params.svg_file.read_text(encoding="utf-8")
+
+    key = (
+        round(params.length, 3),
+        round(params.depth, 3),
+        round(params.height, 3),
+        round(params.thickness, 3),
+        round(params.finger_width, 3),
+        round(params.clearance, 3),
+    )
+    if key not in SVG_CACHE:
+        SVG_CACHE[key] = download_svg(params)
+    return SVG_CACHE[key]
+
+
+def download_svg(params):
+    query = {
+        "FingerJoint_angle": "90.0",
+        "FingerJoint_style": "rectangular",
+        "FingerJoint_surroundingspaces": "2.0",
+        "FingerJoint_bottom_lip": "0.0",
+        "FingerJoint_edge_width": "1.0",
+        "FingerJoint_extra_length": "0.0",
+        "FingerJoint_finger": query_fmt(params.finger_width / params.thickness),
+        "FingerJoint_play": "0",
+        "FingerJoint_space": query_fmt(params.finger_width / params.thickness),
+        "FingerJoint_width": "1.0",
+        "x": query_fmt(params.length),
+        "y": query_fmt(params.depth),
+        "h": query_fmt(params.height),
+        "outside": "1",
+        "triangle": "25.0",
+        "d1": "2.0",
+        "d2": "3.0",
+        "d3": "3.0",
+        "outsidemounts": "1",
+        "holedist": "7.0",
+        "thickness": query_fmt(params.thickness),
+        "format": "svg",
+        "tabs": "0.0",
+        "qr_code": "0",
+        "debug": "0",
+        "labels": "0",
+        "reference": "0",
+        "inner_corners": "corner",
+        "burn": "0",
+        "language": "ru",
+        "render": "2",
+    }
+    url = f"{SERVICE_URL}?{urlencode(query)}"
+    try:
+        data = urlopen(url, timeout=20, context=ssl._create_unverified_context()).read()
+    except Exception as error:
+        raise ValueError(f"Не получилось получить ElectronicsBox.svg: {error}")
+
+    text = data.decode("utf-8")
+    if "<svg" not in text:
+        raise ValueError("Сервис вернул неправильный SVG")
+    return fix_rectangular_slots(text, params)
+
+
+def fix_rectangular_slots(text, params):
+    root = ElementTree.fromstring(text)
+    target_long = params.finger_width + params.clearance
+    target_short = params.thickness + params.clearance
+
+    for item in root.iter():
+        if tag_name(item.tag) != "path":
+            continue
+        if layer_by_color(item.attrib.get("stroke", "")) != "HOLES":
+            continue
+
+        bounds = path_raw_bounds(item.attrib.get("d", ""))
+        if bounds is None:
+            continue
+
+        min_x, min_y, max_x, max_y = bounds
+        width = max_x - min_x
+        height = max_y - min_y
+        sizes = sorted([width, height])
+
+        if abs(sizes[0] - params.thickness) > 0.25:
+            continue
+        if abs(sizes[1] - target_long) > 0.25:
+            continue
+
+        cx = (min_x + max_x) / 2
+        cy = (min_y + max_y) / 2
+        if width >= height:
+            new_w = target_long
+            new_h = target_short
+        else:
+            new_w = target_short
+            new_h = target_long
+
+        x1 = cx - new_w / 2
+        x2 = cx + new_w / 2
+        y1 = cy - new_h / 2
+        y2 = cy + new_h / 2
+        item.set("d", f"M {query_fmt(x1)} {query_fmt(y1)} H {query_fmt(x2)} V {query_fmt(y2)} H {query_fmt(x1)} V {query_fmt(y1)} Z")
+
+    return ElementTree.tostring(root, encoding="unicode")
+
+def check_slot_sizes(params):
+    sizes = rectangular_hole_sizes(params)
+    expected = sorted([round(params.finger_width + params.clearance, 1), round(params.thickness + params.clearance, 1)])
+    for width, height in sizes:
+        current = sorted([round(width, 1), round(height, 1)])
+        if current == expected:
+            return
+    raise ValueError("Пазы не стали больше шипов на заданный зазор")
+
+
+def rectangular_hole_sizes(params):
+    root = ElementTree.fromstring(load_svg_text(params))
+    result = []
+    for item in root.iter():
+        if tag_name(item.tag) != "path":
+            continue
+        if layer_by_color(item.attrib.get("stroke", "")) != "HOLES":
+            continue
+        bounds = path_raw_bounds(item.attrib.get("d", ""))
+        if bounds is None:
+            continue
+        min_x, min_y, max_x, max_y = bounds
+        width = max_x - min_x
+        height = max_y - min_y
+        if width <= params.finger_width + params.clearance + 0.2 and height <= params.finger_width + params.clearance + 0.2:
+            if width > 1 and height > 1:
+                result.append((width, height))
+    return result
 
 
 def svg_size(root):
@@ -106,26 +301,7 @@ def tag_name(tag):
 def layer_by_color(color):
     if "0,0,255" in color:
         return "HOLES"
-    if "255,0,0" in color:
-        return "TEXT"
     return "CUT"
-
-
-def text_segment(item, height):
-    x = 0
-    y = 0
-    transform = item.attrib.get("transform", "")
-    numbers = re.findall(r"[-+]?\d+(?:\.\d+)?", transform)
-    if len(numbers) >= 6:
-        x = float(numbers[4])
-        y = float(numbers[5])
-    else:
-        x = float(item.attrib.get("x", 0))
-        y = float(item.attrib.get("y", 0))
-
-    size_text = item.attrib.get("font-size", "4").replace("px", "")
-    size = float(size_text)
-    return Segment("text", (x, height - y, item.text or "", size), "TEXT")
 
 
 def path_segments(text, height, layer):
@@ -217,6 +393,68 @@ def add_curve(segments, p0, p1, p2, p3, height, layer):
         last = current
 
 
+def path_raw_bounds(text):
+    tokens = re.findall(r"[MmLlHhVvCcZz]|[-+]?\d+(?:\.\d+)?", text)
+    points = []
+    i = 0
+    command = ""
+    point = (0.0, 0.0)
+    start = (0.0, 0.0)
+
+    while i < len(tokens):
+        if tokens[i].isalpha():
+            command = tokens[i]
+            i += 1
+
+        if command in ["M", "m", "L", "l"]:
+            x = float(tokens[i])
+            y = float(tokens[i + 1])
+            i += 2
+            if command in ["m", "l"]:
+                x += point[0]
+                y += point[1]
+            point = (x, y)
+            points.append(point)
+            if command in ["M", "m"]:
+                start = point
+                command = "L" if command == "M" else "l"
+        elif command in ["H", "h"]:
+            x = float(tokens[i])
+            i += 1
+            if command == "h":
+                x += point[0]
+            point = (x, point[1])
+            points.append(point)
+        elif command in ["V", "v"]:
+            y = float(tokens[i])
+            i += 1
+            if command == "v":
+                y += point[1]
+            point = (point[0], y)
+            points.append(point)
+        elif command in ["C", "c"]:
+            values = [float(tokens[i + n]) for n in range(6)]
+            i += 6
+            curve_points = [(values[0], values[1]), (values[2], values[3]), (values[4], values[5])]
+            if command == "c":
+                curve_points = [(x + point[0], y + point[1]) for x, y in curve_points]
+            points.extend(curve_points)
+            point = curve_points[-1]
+        elif command in ["Z", "z"]:
+            point = start
+            points.append(point)
+            command = ""
+        else:
+            i += 1
+
+    if not points:
+        return None
+
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
 def segment_bounds(segments):
     points = []
     for segment in segments:
@@ -232,10 +470,10 @@ def segment_bounds(segments):
             x, y, r = segment.values[:3]
             points.append((x - r, y - r))
             points.append((x + r, y + r))
-        elif segment.kind == "text":
-            x, y, text, size = segment.values
+        elif segment.kind == "rect":
+            x, y, w, h = segment.values
             points.append((x, y))
-            points.append((x + len(text) * size * 0.6, y + size))
+            points.append((x + w, y + h))
 
     if not points:
         return None
