@@ -20,7 +20,7 @@ class BoxParams:
         height=100,
         thickness=3,
         finger_width=6,
-        clearance=0.1,
+        clearance=0.0,
         sheet_width=230,
         sheet_height=460,
         svg_file=None,
@@ -61,7 +61,7 @@ def query_fmt(value):
 
 
 def finger_joint_play(params):
-    return params.clearance / params.thickness
+    return 0.0
 
 
 def validate_params(params):
@@ -71,7 +71,7 @@ def validate_params(params):
         ("Высота", params.height),
         ("Толщина материала", params.thickness),
         ("Ширина шипа", params.finger_width),
-        ("Зазор", params.clearance),
+        ("Зазор шип-паз", params.clearance),
         ("Ширина листа", params.sheet_width),
         ("Высота листа", params.sheet_height),
     ]
@@ -84,10 +84,8 @@ def validate_params(params):
         if value <= 0:
             raise ValueError(f"{name} должна быть положительным числом")
 
-    if params.clearance < 0:
-        raise ValueError("Зазор не может быть отрицательным")
-    if params.clearance >= params.finger_width:
-        raise ValueError("Зазор должен быть меньше ширины шипа")
+    if abs(params.clearance) > 0.0001:
+        raise ValueError("Зазор шип-паз больше не используется: ширина шипа и паза должна совпадать")
     if params.thickness < 2 or params.thickness > 6:
         raise ValueError("Толщина материала должна быть от 2 до 6 мм")
     if params.finger_width < params.thickness or params.finger_width > 20:
@@ -126,7 +124,7 @@ def verify_assembly(params):
     if layout_h > params.sheet_height + 0.001:
         raise ValueError(f"Раскладка выше листа: {fmt(layout_h)} мм > {fmt(params.sheet_height)} мм")
 
-    check_joint_clearance(params, panels)
+    check_joint_sizes(params, panels)
     check_slot_sizes(params)
 
 
@@ -164,7 +162,6 @@ def load_svg_text(params):
         round(params.height, 3),
         round(params.thickness, 3),
         round(params.finger_width, 3),
-        round(params.clearance, 3),
     )
     if key not in SVG_CACHE:
         SVG_CACHE[key] = download_svg(params)
@@ -219,8 +216,8 @@ def download_svg(params):
 
 def fix_rectangular_slots(text, params):
     root = ElementTree.fromstring(text)
-    target_long = params.finger_width + params.clearance
-    target_short = params.thickness + params.clearance
+    target_long = params.finger_width
+    target_short = params.thickness
 
     for item in root.iter():
         if tag_name(item.tag) != "path":
@@ -261,23 +258,20 @@ def fix_rectangular_slots(text, params):
 
 def check_slot_sizes(params):
     sizes = rectangular_hole_sizes(params)
-    expected = sorted([round(params.finger_width + params.clearance, 1), round(params.thickness + params.clearance, 1)])
+    expected = sorted([round(params.finger_width, 1), round(params.thickness, 1)])
     for width, height in sizes:
         current = sorted([round(width, 1), round(height, 1)])
         if current == expected:
             return
-    raise ValueError("Пазы не стали больше шипов на заданный зазор")
+    raise ValueError("Прямоугольные пазы не совпадают с размером шипов")
 
 
-def check_joint_clearance(params, panels):
-    if params.clearance <= 0:
-        return
-
-    expected = params.finger_width + params.clearance
+def check_joint_sizes(params, panels):
+    expected = params.finger_width
     for size in joint_line_sizes(params, panels):
         if abs(size - expected) <= 0.05:
             return
-    raise ValueError("Пальцевые соединения не получили заданный зазор")
+    raise ValueError("Пальцевые соединения не совпадают с шириной шипа")
 
 
 def joint_line_sizes(params, panels=None):
@@ -285,8 +279,8 @@ def joint_line_sizes(params, panels=None):
         panels = build_panels(params)
 
     sizes = []
-    min_size = max(0, params.finger_width - params.clearance - 0.2)
-    max_size = params.finger_width + params.clearance + 0.2
+    min_size = max(0, params.finger_width - 0.2)
+    max_size = params.finger_width + 0.2
 
     for panel in panels:
         for segment in panel.segments:
@@ -321,7 +315,7 @@ def rectangular_hole_sizes(params):
         min_x, min_y, max_x, max_y = bounds
         width = max_x - min_x
         height = max_y - min_y
-        if width <= params.finger_width + params.clearance + 0.2 and height <= params.finger_width + params.clearance + 0.2:
+        if width <= params.finger_width + 0.2 and height <= params.finger_width + 0.2:
             if width > 1 and height > 1:
                 result.append((width, height))
     return result

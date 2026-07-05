@@ -22,7 +22,6 @@ class GeneratorApp(tk.Tk):
         self.height_var = tk.StringVar(value="100.0")
         self.thickness_var = tk.StringVar(value="3.0")
         self.finger_var = tk.StringVar(value="6.0")
-        self.clearance_var = tk.StringVar(value="0.1")
         self.file_var = tk.StringVar(value="electronics_box.dxf")
         self.status = tk.StringVar(value="")
         self.make_window()
@@ -40,7 +39,6 @@ class GeneratorApp(tk.Tk):
             ("Высота (внутренняя высота), мм", self.height_var),
             ("Толщина материала, мм", self.thickness_var),
             ("Ширина шипа, мм", self.finger_var),
-            ("Зазор шип-паз, мм", self.clearance_var),
             ("Имя выходного файла", self.file_var),
         ]
 
@@ -50,13 +48,13 @@ class GeneratorApp(tk.Tk):
             ttk.Entry(main, textvariable=variable).grid(row=row, column=1, sticky="ew", pady=5)
 
         buttons = ttk.Frame(main)
-        buttons.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(18, 8))
+        buttons.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(18, 8))
         buttons.columnconfigure(0, weight=1)
         buttons.columnconfigure(1, weight=1)
 
         ttk.Button(buttons, text="Сгенерировать DXF", command=self.generate_dxf).grid(row=0, column=0, sticky="ew", padx=(0, 8))
         ttk.Button(buttons, text="Сгенерировать SVG", command=self.generate_svg).grid(row=0, column=1, sticky="ew", padx=(8, 0))
-        ttk.Label(main, textvariable=self.status, foreground="#245070").grid(row=9, column=0, columnspan=2, sticky="w")
+        ttk.Label(main, textvariable=self.status, foreground="#245070").grid(row=8, column=0, columnspan=2, sticky="w")
 
     def get_params(self):
         return BoxParams(
@@ -65,7 +63,6 @@ class GeneratorApp(tk.Tk):
             self.read_number(self.height_var.get(), "Высота"),
             self.read_number(self.thickness_var.get(), "Толщина материала"),
             self.read_number(self.finger_var.get(), "Ширина шипа"),
-            self.read_number(self.clearance_var.get(), "Зазор"),
         )
 
     def read_number(self, text, name):

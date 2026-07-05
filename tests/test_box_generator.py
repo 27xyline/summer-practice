@@ -49,10 +49,10 @@ class BoxGeneratorTests(unittest.TestCase):
             self.assertLessEqual(max_x - min_x, params.sheet_width)
             self.assertLessEqual(max_y - min_y, params.sheet_height)
 
-    def test_slots_are_larger_than_teeth(self):
-        params = BoxParams(clearance=0.1)
+    def test_slots_match_teeth(self):
+        params = BoxParams()
         sizes = rectangular_hole_sizes(params)
-        expected = sorted([round(params.finger_width + params.clearance, 1), round(params.thickness + params.clearance, 1)])
+        expected = sorted([round(params.finger_width, 1), round(params.thickness, 1)])
         found = 0
 
         for width, height in sizes:
@@ -61,16 +61,16 @@ class BoxGeneratorTests(unittest.TestCase):
                 found += 1
 
         self.assertGreater(found, 10)
-        self.assertEqual(expected, [3.1, 6.1])
+        self.assertEqual(expected, [3.0, 6.0])
 
-    def test_finger_joints_have_assembly_clearance(self):
-        params = BoxParams(clearance=0.1)
+    def test_finger_joints_use_nominal_width(self):
+        params = BoxParams()
         sizes = [round(size, 1) for size in joint_line_sizes(params)]
 
-        self.assertIn(round(params.finger_width - params.clearance, 1), sizes)
         self.assertIn(6.0, sizes)
-        self.assertIn(round(params.finger_width + params.clearance, 1), sizes)
-        self.assertGreater(sizes.count(round(params.finger_width + params.clearance, 1)), 10)
+        self.assertNotIn(5.9, sizes)
+        self.assertNotIn(6.1, sizes)
+        self.assertGreater(sizes.count(round(params.finger_width, 1)), 10)
 
     def test_has_cut_and_hole_geometry(self):
         cut = 0
@@ -92,6 +92,10 @@ class BoxGeneratorTests(unittest.TestCase):
     def test_rejects_too_large_layout(self):
         with self.assertRaises(ValueError):
             verify_assembly(BoxParams(140, 140, 140, 3))
+
+    def test_rejects_clearance(self):
+        with self.assertRaises(ValueError):
+            verify_assembly(BoxParams(clearance=0.1))
 
     def test_no_double_cut_lines(self):
         lines = {}
