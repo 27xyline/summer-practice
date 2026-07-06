@@ -21,7 +21,7 @@ class BoxGeneratorTests(unittest.TestCase):
         for panel in panels:
             segments.extend(panel.segments)
 
-        self.assertEqual(len(panels), 1)
+        self.assertEqual([panel.title for panel in panels], ["ElectronicsBox"])
         self.assertEqual(len(segments), 2864)
         self.assertEqual(sum(1 for segment in segments if segment.layer == "CUT"), 664)
         self.assertEqual(sum(1 for segment in segments if segment.layer == "HOLES"), 2200)
@@ -141,7 +141,7 @@ class BoxGeneratorTests(unittest.TestCase):
         for count in lines.values():
             self.assertEqual(count, 1)
 
-    def test_verifies_template(self):
+    def test_verifies_default_params(self):
         verify_assembly(BoxParams())
 
 
