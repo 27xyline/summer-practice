@@ -3,12 +3,11 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from box_geometry import BoxParams, build_panels, fmt, segment_bounds, validate_params, verify_assembly
+from box_geometry import BoxParams, build_panels, fmt, segment_bounds, verify_assembly
 from dxf_writer import save_dxf_file, write_example_files
-from svg_writer import save_svg_file
 
 
-APP_TITLE = "ElectronicsBox — генератор DXF и SVG"
+APP_TITLE = "ElectronicsBox — генератор DXF"
 
 
 class GeneratorApp(tk.Tk):
@@ -50,10 +49,8 @@ class GeneratorApp(tk.Tk):
         buttons = ttk.Frame(main)
         buttons.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(18, 8))
         buttons.columnconfigure(0, weight=1)
-        buttons.columnconfigure(1, weight=1)
 
-        ttk.Button(buttons, text="Сгенерировать DXF", command=self.generate_dxf).grid(row=0, column=0, sticky="ew", padx=(0, 8))
-        ttk.Button(buttons, text="Сгенерировать SVG", command=self.generate_svg).grid(row=0, column=1, sticky="ew", padx=(8, 0))
+        ttk.Button(buttons, text="Сгенерировать DXF", command=self.generate_dxf).grid(row=0, column=0, sticky="ew")
         ttk.Label(main, textvariable=self.status, foreground="#245070").grid(row=8, column=0, columnspan=2, sticky="w")
 
     def get_params(self):
@@ -81,7 +78,6 @@ class GeneratorApp(tk.Tk):
             path = path.with_suffix(extension)
         if not path.is_absolute():
             path = Path("output") / path
-        path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
     def generate_dxf(self):
@@ -90,16 +86,6 @@ class GeneratorApp(tk.Tk):
             verify_assembly(params)
             path = self.output_path(".dxf")
             save_dxf_file(params, path)
-            self.show_result(params, path)
-        except Exception as error:
-            messagebox.showerror("Ошибка", str(error))
-
-    def generate_svg(self):
-        try:
-            params = self.get_params()
-            verify_assembly(params)
-            path = self.output_path(".svg")
-            save_svg_file(params, path)
             self.show_result(params, path)
         except Exception as error:
             messagebox.showerror("Ошибка", str(error))
@@ -116,7 +102,6 @@ class GeneratorApp(tk.Tk):
 
 def check_examples():
     params = BoxParams()
-    validate_params(params)
     verify_assembly(params)
     segments = []
     for panel in build_panels(params):

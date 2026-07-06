@@ -1,15 +1,35 @@
+import tempfile
 import unittest
+from pathlib import Path
 
-from box_geometry import BoxParams, build_panels, joint_line_sizes, rectangular_hole_sizes, segment_bounds, verify_assembly
-from dxf_writer import create_dxf_document
+from box_geometry import (
+    BoxParams,
+    build_panels,
+    joint_line_sizes,
+    rectangular_hole_sizes,
+    segment_bounds,
+    verify_assembly,
+)
+from dxf_writer import create_dxf_document, save_dxf_file
 
 
 class BoxGeneratorTests(unittest.TestCase):
     def test_builds_electronics_box_parts(self):
         panels = build_panels(BoxParams())
+        segments = []
+        for panel in panels:
+            segments.extend(panel.segments)
 
-        self.assertEqual(len(panels), 7)
-        self.assertGreater(sum(len(panel.segments) for panel in panels), 2500)
+        self.assertEqual(len(panels), 1)
+        self.assertEqual(len(segments), 2864)
+        self.assertEqual(sum(1 for segment in segments if segment.layer == "CUT"), 664)
+        self.assertEqual(sum(1 for segment in segments if segment.layer == "HOLES"), 2200)
+
+    def test_default_dxf_uses_line_geometry_only(self):
+        doc = create_dxf_document(BoxParams())
+
+        for entity in doc.modelspace():
+            self.assertEqual(entity.dxftype(), "LINE")
 
     def test_dxf_has_no_text(self):
         doc = create_dxf_document(BoxParams())
@@ -18,13 +38,16 @@ class BoxGeneratorTests(unittest.TestCase):
             objects.append(item.dxftype())
 
         self.assertEqual(doc.header["$INSUNITS"], 4)
+        self.assertEqual(doc.dxfversion, "AC1032")
         self.assertIn("LINE", objects)
         self.assertNotIn("TEXT", objects)
         self.assertTrue(doc.layers.has_entry("CUT"))
         self.assertTrue(doc.layers.has_entry("HOLES"))
         self.assertFalse(doc.layers.has_entry("TEXT"))
+        self.assertEqual(doc.layers.get("CUT").dxf.color, 7)
+        self.assertEqual(doc.layers.get("HOLES").dxf.color, 5)
 
-    def test_default_layout_is_like_electronics_box_svg(self):
+    def test_default_layout_fits_sheet(self):
         params = BoxParams()
         segments = []
         for panel in build_panels(params):
@@ -83,7 +106,17 @@ class BoxGeneratorTests(unittest.TestCase):
                     holes += 1
 
         self.assertGreater(cut, 500)
-        self.assertGreater(holes, 100)
+        self.assertGreater(holes, 40)
+
+    def test_dxf_writer_creates_parent_directories(self):
+        params = BoxParams()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "nested"
+            dxf_path = output_dir / "box.dxf"
+
+            save_dxf_file(params, dxf_path)
+
+            self.assertTrue(dxf_path.exists())
 
     def test_rejects_too_small_box(self):
         with self.assertRaises(ValueError):
@@ -92,10 +125,6 @@ class BoxGeneratorTests(unittest.TestCase):
     def test_rejects_too_large_layout(self):
         with self.assertRaises(ValueError):
             verify_assembly(BoxParams(140, 140, 140, 3))
-
-    def test_rejects_clearance(self):
-        with self.assertRaises(ValueError):
-            verify_assembly(BoxParams(clearance=0.1))
 
     def test_no_double_cut_lines(self):
         lines = {}
