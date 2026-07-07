@@ -1,10 +1,9 @@
-import sys
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 
 from box_geometry import BoxParams, build_panels, fmt, segment_bounds, verify_assembly
-from dxf_writer import save_dxf_file, write_example_files
+from dxf_writer import save_dxf_file
 
 
 APP_TITLE = "ElectronicsBox — генератор DXF"
@@ -100,27 +99,7 @@ class GeneratorApp(tk.Tk):
         messagebox.showinfo("Готово", text)
 
 
-def check_examples():
-    params = BoxParams()
-    verify_assembly(params)
-    segments = []
-    for panel in build_panels(params):
-        segments.extend(panel.segments)
-    min_x, min_y, max_x, max_y = segment_bounds(segments)
-    print(f"OK: раскладка {fmt(max_x - min_x)} x {fmt(max_y - min_y)} мм")
-
-
 def main():
-    if "--examples" in sys.argv:
-        files = write_example_files(Path("output"))
-        for path in files:
-            print(path)
-        return
-
-    if "--check" in sys.argv:
-        check_examples()
-        return
-
     app = GeneratorApp()
     app.mainloop()
 

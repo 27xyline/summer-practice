@@ -9,7 +9,6 @@
 - `laser_box_generator.py` - окно приложения и кнопки генерации.
 - `box_geometry.py` - формульный расчет геометрии деталей, пазов, отверстий и раскладки.
 - `dxf_writer.py` - запись DXF через `ezdxf`.
-- `tests/` - автоматические проверки.
 
 ## Запуск
 
@@ -17,23 +16,6 @@
 python3 -m pip install -r requirements.txt
 python3 laser_box_generator.py
 ```
-
-## Генерация DXF без GUI
-
-```bash
-python3 laser_box_generator.py --examples
-```
-
-Команда создаст файл `output/electronics_box.dxf`.
-
-## Проверка
-
-```bash
-python3 laser_box_generator.py --check
-python3 -m unittest discover -s tests
-```
-
-Проверки контролируют формирование LINE-геометрии, слои DXF, отсутствие текста, изменение размеров, попадание раскладки на лист и совпадение размеров шипов с ответными пазами.
 
 ## Что получается
 

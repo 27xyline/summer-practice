@@ -1,6 +1,6 @@
 import ezdxf
 
-from box_geometry import BoxParams, build_panels, segment_bounds, verify_assembly
+from box_geometry import build_panels, segment_bounds, verify_assembly
 
 
 LAYER_COLORS = {"CUT": 7, "HOLES": 5}
@@ -55,10 +55,3 @@ def save_dxf_file(params, path):
     doc = create_dxf_document(params)
     path.parent.mkdir(parents=True, exist_ok=True)
     doc.saveas(path)
-
-
-def write_example_files(output_dir):
-    output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / "electronics_box.dxf"
-    save_dxf_file(BoxParams(), path)
-    return [path]
