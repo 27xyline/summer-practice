@@ -62,7 +62,7 @@ class BoxGeneratorTests(unittest.TestCase):
         self.assertLessEqual(max_x - min_x, params.sheet_width)
         self.assertLessEqual(max_y - min_y, params.sheet_height)
         self.assertAlmostEqual(max_x - min_x, 201.5, places=1)
-        self.assertAlmostEqual(max_y - min_y, 431, places=1)
+        self.assertAlmostEqual(max_y - min_y, 398.5, places=1)
 
     def test_can_change_size_and_thickness(self):
         for params in [BoxParams(80, 70, 60, 4), BoxParams(100, 100, 100, 4)]:

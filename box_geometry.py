@@ -193,8 +193,8 @@ def top_layout(params):
 
 
 def mounts_layout(params):
-    top_x, top_y, _, top_height = top_layout(params)
-    return top_x, top_y + top_height + layout_gap(params)
+    top_x, top_y, top_width, _ = top_layout(params)
+    return top_x + top_width + layout_gap(params), top_y
 
 
 def wall_contours(x, y, width, height, params, style):
@@ -431,24 +431,26 @@ def top_contours(x, y, width, height, params):
 def mounts_contours(x, y, params):
     size = mount_size(params)
     radius = max(1.0, params.thickness / 3)
-    lower_y = y + params.thickness
-    upper_offset = size / 4
-    gap = max(params.finger_width + params.thickness, size / 3)
+    gap = params.thickness
+    second_pair_y = y + size + params.thickness + gap
 
-    lower_left_x = x
-    upper_left_x = x + upper_offset
-    lower_right_x = x + size + gap
-    upper_right_x = lower_right_x + upper_offset
+    upper_x = x + size / 4
+    lower_x = x
+
+    upper_y_1 = y
+    lower_y_1 = y + params.thickness
+    upper_y_2 = second_pair_y
+    lower_y_2 = second_pair_y + params.thickness
 
     return [
-        (CUT, upper_mount_contour(upper_left_x, y, size, params)),
-        (HOLES, circle_contour(upper_left_x + size * 0.6, y + size * 0.4, radius, 90.0)),
-        (CUT, lower_mount_contour(lower_left_x, lower_y, size, params)),
-        (HOLES, circle_contour(lower_left_x + size * 0.4, lower_y + size * 0.6, radius, -90.0)),
-        (CUT, upper_mount_contour(upper_right_x, y, size, params)),
-        (HOLES, circle_contour(upper_right_x + size * 0.6, y + size * 0.4, radius, 90.0)),
-        (CUT, lower_mount_contour(lower_right_x, lower_y, size, params)),
-        (HOLES, circle_contour(lower_right_x + size * 0.4, lower_y + size * 0.6, radius, -90.0)),
+        (CUT, upper_mount_contour(upper_x, upper_y_1, size, params)),
+        (HOLES, circle_contour(upper_x + size * 0.6, upper_y_1 + size * 0.4, radius, 90.0)),
+        (CUT, lower_mount_contour(lower_x, lower_y_1, size, params)),
+        (HOLES, circle_contour(lower_x + size * 0.4, lower_y_1 + size * 0.6, radius, -90.0)),
+        (CUT, upper_mount_contour(upper_x, upper_y_2, size, params)),
+        (HOLES, circle_contour(upper_x + size * 0.6, upper_y_2 + size * 0.4, radius, 90.0)),
+        (CUT, lower_mount_contour(lower_x, lower_y_2, size, params)),
+        (HOLES, circle_contour(lower_x + size * 0.4, lower_y_2 + size * 0.6, radius, -90.0)),
     ]
 
 
