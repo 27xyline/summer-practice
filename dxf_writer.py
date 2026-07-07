@@ -1,65 +1,57 @@
 import ezdxf
 
-from box_geometry import BoxParams, build_panels, validate_params, verify_assembly
+from box_geometry import build_panels, segment_bounds, verify_assembly
 
 
-def add_layer(doc, name):
-    colors = {"CUT": 250, "HOLES": 5}
-    if not doc.layers.has_entry(name):
-        doc.layers.new(name=name, dxfattribs={"color": colors.get(name, 7)})
-
-
-def layer_color(layer):
-    colors = {"CUT": 250, "HOLES": 5}
-    return colors.get(layer, 7)
-
-
-def add_segment(doc, msp, segment):
-    add_layer(doc, segment.layer)
-    color = layer_color(segment.layer)
-
-    if segment.kind == "line":
-        x1, y1, x2, y2 = segment.values
-        msp.add_line((x1, y1, 0), (x2, y2, 0), dxfattribs={"layer": segment.layer, "color": color})
-    elif segment.kind == "circle":
-        x, y, r = segment.values
-        msp.add_circle((x, y, 0), r, dxfattribs={"layer": segment.layer, "color": color})
-    elif segment.kind == "arc":
-        x, y, r, a1, a2 = segment.values
-        msp.add_arc((x, y, 0), r, a1, a2, dxfattribs={"layer": segment.layer, "color": color})
-    elif segment.kind == "rect":
-        x, y, w, h = segment.values
-        points = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
-        msp.add_lwpolyline(points, close=True, dxfattribs={"layer": segment.layer, "color": color})
+LAYER_COLORS = {"CUT": 7, "HOLES": 5}
+LINE_STYLES = {
+    "CUT": {"color": 250, "linetype": "K5LT32768", "lineweight": 18},
+    "HOLES": {"color": 5, "linetype": "K5LT32769", "lineweight": 18},
+}
 
 
 def create_dxf_document(params):
-    validate_params(params)
     verify_assembly(params)
+    segments = [segment for panel in build_panels(params) for segment in panel.segments]
 
-    doc = ezdxf.new("R2010")
+    doc = ezdxf.new("R2018")
     doc.header["$MEASUREMENT"] = 1
     doc.header["$INSUNITS"] = 4
     doc.units = 4
+
+    add_layers(doc)
     msp = doc.modelspace()
+    for segment in segments:
+        x1, y1 = segment.start
+        x2, y2 = segment.end
+        msp.add_line((x1, y1, 0), (x2, y2, 0), dxfattribs=line_attribs(segment.layer))
 
-    for name in ["CUT", "HOLES"]:
-        add_layer(doc, name)
-
-    for panel in build_panels(params):
-        for segment in panel.segments:
-            add_segment(doc, msp, segment)
+    bounds = segment_bounds(segments)
+    if bounds is not None:
+        min_x, min_y, max_x, max_y = bounds
+        doc.header["$EXTMIN"] = (min_x, min_y, 0)
+        doc.header["$EXTMAX"] = (max_x, max_y, 0)
 
     return doc
 
 
+def add_layers(doc):
+    for linetype in {style["linetype"] for style in LINE_STYLES.values()}:
+        if not doc.linetypes.has_entry(linetype):
+            doc.linetypes.add(linetype, pattern=[0.0], description="")
+
+    for layer, color in LAYER_COLORS.items():
+        if not doc.layers.has_entry(layer):
+            doc.layers.new(name=layer, dxfattribs={"color": color})
+
+
+def line_attribs(layer):
+    attrs = {"layer": layer}
+    attrs.update(LINE_STYLES.get(layer, {}))
+    return attrs
+
+
 def save_dxf_file(params, path):
     doc = create_dxf_document(params)
+    path.parent.mkdir(parents=True, exist_ok=True)
     doc.saveas(path)
-
-
-def write_example_files(output_dir):
-    output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / "electronics_box.dxf"
-    save_dxf_file(BoxParams(), path)
-    return [path]

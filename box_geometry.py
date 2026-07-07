@@ -1,67 +1,62 @@
 import math
-import re
-import ssl
-from pathlib import Path
-from urllib.parse import urlencode
-from urllib.request import urlopen
-from xml.etree import ElementTree
+from dataclasses import dataclass
 
 
-SVG_FILE = Path(__file__).parent / "assets" / "ElectronicsBox.svg"
-SERVICE_URL = "https://box.laserbiz.ru/site.wsgi/ElectronicsBox"
-SVG_CACHE = {}
+Point = tuple[float, float]
+
+CUT = "CUT"
+HOLES = "HOLES"
+
+EPSILON = 0.0001
+ZERO_EPSILON = 0.000001
+
+CIRCLE_STEPS = 176
+CORNER_STEPS = 48
 
 
+@dataclass
 class BoxParams:
-    def __init__(
-        self,
-        length=100,
-        depth=100,
-        height=100,
-        thickness=3,
-        finger_width=6,
-        clearance=0.1,
-        sheet_width=230,
-        sheet_height=460,
-        svg_file=None,
-    ):
-        self.length = float(length)
-        self.depth = float(depth)
-        self.width = float(depth)
-        self.height = float(height)
-        self.thickness = float(thickness)
-        self.finger_width = float(finger_width)
-        self.clearance = float(clearance)
-        self.sheet_width = float(sheet_width)
-        self.sheet_height = float(sheet_height)
-        self.svg_file = Path(svg_file) if svg_file else None
+    length: float = 100
+    depth: float = 100
+    height: float = 100
+    thickness: float = 3
+    finger_width: float = 6
+    sheet_width: float = 300
+    sheet_height: float = 460
+
+    def __post_init__(self):
+        self.length = float(self.length)
+        self.depth = float(self.depth)
+        self.height = float(self.height)
+        self.thickness = float(self.thickness)
+        self.finger_width = float(self.finger_width)
+        self.sheet_width = float(self.sheet_width)
+        self.sheet_height = float(self.sheet_height)
 
 
+@dataclass(frozen=True)
 class Segment:
-    def __init__(self, kind, values, layer="CUT"):
-        self.kind = kind
-        self.values = values
-        self.layer = layer
+    start: Point
+    end: Point
+    layer: str = CUT
+
+    @property
+    def values(self):
+        x1, y1 = self.start
+        x2, y2 = self.end
+        return x1, y1, x2, y2
 
 
+@dataclass(frozen=True)
 class Panel:
-    def __init__(self, title, x, y, segments):
-        self.title = title
-        self.x = x
-        self.y = y
-        self.segments = segments
+    title: str
+    x: float
+    y: float
+    segments: list[Segment]
 
 
 def fmt(value):
     return f"{value:.1f}".rstrip("0").rstrip(".")
-
-
-def query_fmt(value):
-    return f"{value:.4f}".rstrip("0").rstrip(".")
-
-
-def finger_joint_play(params):
-    return params.clearance / params.thickness
 
 
 def validate_params(params):
@@ -71,7 +66,6 @@ def validate_params(params):
         ("Высота", params.height),
         ("Толщина материала", params.thickness),
         ("Ширина шипа", params.finger_width),
-        ("Зазор", params.clearance),
         ("Ширина листа", params.sheet_width),
         ("Высота листа", params.sheet_height),
     ]
@@ -80,16 +74,13 @@ def validate_params(params):
         if not math.isfinite(value):
             raise ValueError(f"{name} указана неправильно")
 
-    for name, value in values[:5] + values[6:]:
+    for name, value in values:
         if value <= 0:
             raise ValueError(f"{name} должна быть положительным числом")
 
-    if params.clearance < 0:
-        raise ValueError("Зазор не может быть отрицательным")
-    if params.clearance >= params.finger_width:
-        raise ValueError("Зазор должен быть меньше ширины шипа")
     if params.thickness < 2 or params.thickness > 6:
         raise ValueError("Толщина материала должна быть от 2 до 6 мм")
+
     if params.finger_width < params.thickness or params.finger_width > 20:
         raise ValueError("Ширина шипа должна быть от толщины материала до 20 мм")
 
@@ -106,11 +97,9 @@ def validate_params(params):
 
 def verify_assembly(params):
     validate_params(params)
-    panels = build_panels(params)
-    segments = []
-    for panel in panels:
-        segments.extend(panel.segments)
 
+    panels = build_panels(params)
+    segments = collect_segments(panels)
     bounds = segment_bounds(segments)
     if bounds is None:
         raise ValueError("В чертеже нет линий")
@@ -119,414 +108,502 @@ def verify_assembly(params):
     if min_x < -0.001 or min_y < -0.001:
         raise ValueError("Чертеж выходит в отрицательные координаты")
 
-    layout_w = max_x - min_x
-    layout_h = max_y - min_y
-    if layout_w > params.sheet_width + 0.001:
-        raise ValueError(f"Раскладка шире листа: {fmt(layout_w)} мм > {fmt(params.sheet_width)} мм")
-    if layout_h > params.sheet_height + 0.001:
-        raise ValueError(f"Раскладка выше листа: {fmt(layout_h)} мм > {fmt(params.sheet_height)} мм")
+    layout_width = max_x - min_x
+    layout_height = max_y - min_y
 
-    check_joint_clearance(params, panels)
-    check_slot_sizes(params)
+    if layout_width > params.sheet_width + 0.001:
+        raise ValueError(f"Раскладка шире листа: {fmt(layout_width)} мм > {fmt(params.sheet_width)} мм")
+    if layout_height > params.sheet_height + 0.001:
+        raise ValueError(f"Раскладка выше листа: {fmt(layout_height)} мм > {fmt(params.sheet_height)} мм")
 
 
 def build_panels(params):
     validate_params(params)
-    root = ElementTree.fromstring(load_svg_text(params))
-    width, height = svg_size(root)
-    panels = []
-
-    for group in root.iter():
-        if tag_name(group.tag) == "g" and group.attrib.get("id", "").startswith("p-"):
-            segments = []
-            title = group.attrib.get("id", "")
-            for item in group:
-                name = tag_name(item.tag)
-                if name == "path":
-                    layer = layer_by_color(item.attrib.get("stroke", ""))
-                    segments.extend(path_segments(item.attrib.get("d", ""), height, layer))
-                elif name == "text":
-                    title = (item.text or title).strip()
-
-            if segments:
-                panels.append(Panel(title, 0, 0, segments))
-
-    return panels
+    return build_generated_panels(params)
 
 
-def load_svg_text(params):
-    if params.svg_file:
-        return params.svg_file.read_text(encoding="utf-8")
-
-    key = (
-        round(params.length, 3),
-        round(params.depth, 3),
-        round(params.height, 3),
-        round(params.thickness, 3),
-        round(params.finger_width, 3),
-        round(params.clearance, 3),
-    )
-    if key not in SVG_CACHE:
-        SVG_CACHE[key] = download_svg(params)
-    return SVG_CACHE[key]
-
-
-def download_svg(params):
-    query = {
-        "FingerJoint_angle": "90.0",
-        "FingerJoint_style": "rectangular",
-        "FingerJoint_surroundingspaces": "2.0",
-        "FingerJoint_bottom_lip": "0.0",
-        "FingerJoint_edge_width": "1.0",
-        "FingerJoint_extra_length": "0.0",
-        "FingerJoint_finger": query_fmt(params.finger_width / params.thickness),
-        "FingerJoint_play": query_fmt(finger_joint_play(params)),
-        "FingerJoint_space": query_fmt(params.finger_width / params.thickness),
-        "FingerJoint_width": "1.0",
-        "x": query_fmt(params.length),
-        "y": query_fmt(params.depth),
-        "h": query_fmt(params.height),
-        "outside": "1",
-        "triangle": "25.0",
-        "d1": "2.0",
-        "d2": "3.0",
-        "d3": "3.0",
-        "outsidemounts": "1",
-        "holedist": "7.0",
-        "thickness": query_fmt(params.thickness),
-        "format": "svg",
-        "tabs": "0.0",
-        "qr_code": "0",
-        "debug": "0",
-        "labels": "0",
-        "reference": "0",
-        "inner_corners": "corner",
-        "burn": "0",
-        "language": "ru",
-        "render": "2",
-    }
-    url = f"{SERVICE_URL}?{urlencode(query)}"
-    try:
-        data = urlopen(url, timeout=20, context=ssl._create_unverified_context()).read()
-    except Exception as error:
-        raise ValueError(f"Не получилось получить ElectronicsBox.svg: {error}")
-
-    text = data.decode("utf-8")
-    if "<svg" not in text:
-        raise ValueError("Сервис вернул неправильный SVG")
-    return fix_rectangular_slots(text, params)
-
-
-def fix_rectangular_slots(text, params):
-    root = ElementTree.fromstring(text)
-    target_long = params.finger_width + params.clearance
-    target_short = params.thickness + params.clearance
-
-    for item in root.iter():
-        if tag_name(item.tag) != "path":
-            continue
-        if layer_by_color(item.attrib.get("stroke", "")) != "HOLES":
-            continue
-
-        bounds = path_raw_bounds(item.attrib.get("d", ""))
-        if bounds is None:
-            continue
-
-        min_x, min_y, max_x, max_y = bounds
-        width = max_x - min_x
-        height = max_y - min_y
-        sizes = sorted([width, height])
-
-        if abs(sizes[0] - params.thickness) > 0.25:
-            continue
-        if abs(sizes[1] - target_long) > 0.25:
-            continue
-
-        cx = (min_x + max_x) / 2
-        cy = (min_y + max_y) / 2
-        if width >= height:
-            new_w = target_long
-            new_h = target_short
-        else:
-            new_w = target_short
-            new_h = target_long
-
-        x1 = cx - new_w / 2
-        x2 = cx + new_w / 2
-        y1 = cy - new_h / 2
-        y2 = cy + new_h / 2
-        item.set("d", f"M {query_fmt(x1)} {query_fmt(y1)} H {query_fmt(x2)} V {query_fmt(y2)} H {query_fmt(x1)} V {query_fmt(y1)} Z")
-
-    return ElementTree.tostring(root, encoding="unicode")
-
-def check_slot_sizes(params):
-    sizes = rectangular_hole_sizes(params)
-    expected = sorted([round(params.finger_width + params.clearance, 1), round(params.thickness + params.clearance, 1)])
-    for width, height in sizes:
-        current = sorted([round(width, 1), round(height, 1)])
-        if current == expected:
-            return
-    raise ValueError("Пазы не стали больше шипов на заданный зазор")
-
-
-def check_joint_clearance(params, panels):
-    if params.clearance <= 0:
-        return
-
-    expected = params.finger_width + params.clearance
-    for size in joint_line_sizes(params, panels):
-        if abs(size - expected) <= 0.05:
-            return
-    raise ValueError("Пальцевые соединения не получили заданный зазор")
-
-
-def joint_line_sizes(params, panels=None):
-    if panels is None:
-        panels = build_panels(params)
-
-    sizes = []
-    min_size = max(0, params.finger_width - params.clearance - 0.2)
-    max_size = params.finger_width + params.clearance + 0.2
-
-    for panel in panels:
-        for segment in panel.segments:
-            if segment.layer != "CUT" or segment.kind != "line":
-                continue
-            x1, y1, x2, y2 = segment.values
-            dx = abs(x2 - x1)
-            dy = abs(y2 - y1)
-            length = None
-            if dx < 0.001:
-                length = dy
-            elif dy < 0.001:
-                length = dx
-
-            if length is not None and min_size <= length <= max_size:
-                sizes.append(length)
-
-    return sizes
-
-
-def rectangular_hole_sizes(params):
-    root = ElementTree.fromstring(load_svg_text(params))
-    result = []
-    for item in root.iter():
-        if tag_name(item.tag) != "path":
-            continue
-        if layer_by_color(item.attrib.get("stroke", "")) != "HOLES":
-            continue
-        bounds = path_raw_bounds(item.attrib.get("d", ""))
-        if bounds is None:
-            continue
-        min_x, min_y, max_x, max_y = bounds
-        width = max_x - min_x
-        height = max_y - min_y
-        if width <= params.finger_width + params.clearance + 0.2 and height <= params.finger_width + params.clearance + 0.2:
-            if width > 1 and height > 1:
-                result.append((width, height))
-    return result
-
-
-def svg_size(root):
-    view_box = root.attrib.get("viewBox", "0 0 0 0").replace(",", " ").split()
-    if len(view_box) == 4:
-        return float(view_box[2]), float(view_box[3])
-
-    width = root.attrib.get("width", "0").replace("mm", "")
-    height = root.attrib.get("height", "0").replace("mm", "")
-    return float(width), float(height)
-
-
-def tag_name(tag):
-    if "}" in tag:
-        return tag.split("}", 1)[1]
-    return tag
-
-
-def layer_by_color(color):
-    if "0,0,255" in color:
-        return "HOLES"
-    return "CUT"
-
-
-def path_segments(text, height, layer):
-    tokens = re.findall(r"[MmLlHhVvCcZz]|[-+]?\d+(?:\.\d+)?", text)
+def collect_segments(panels):
     segments = []
-    i = 0
-    command = ""
-    point = (0.0, 0.0)
-    start = (0.0, 0.0)
+    for panel in panels:
+        segments.extend(panel.segments)
+    return segments
 
-    while i < len(tokens):
-        if tokens[i].isalpha():
-            command = tokens[i]
-            i += 1
 
-        if command in ["M", "m"]:
-            x = float(tokens[i])
-            y = float(tokens[i + 1])
-            i += 2
-            if command == "m":
-                x += point[0]
-                y += point[1]
-            point = (x, y)
-            start = point
-            command = "L" if command == "M" else "l"
-        elif command in ["L", "l"]:
-            x = float(tokens[i])
-            y = float(tokens[i + 1])
-            i += 2
-            if command == "l":
-                x += point[0]
-                y += point[1]
-            new_point = (x, y)
-            add_line(segments, point, new_point, height, layer)
-            point = new_point
-        elif command in ["H", "h"]:
-            x = float(tokens[i])
-            i += 1
-            if command == "h":
-                x += point[0]
-            new_point = (x, point[1])
-            add_line(segments, point, new_point, height, layer)
-            point = new_point
-        elif command in ["V", "v"]:
-            y = float(tokens[i])
-            i += 1
-            if command == "v":
-                y += point[1]
-            new_point = (point[0], y)
-            add_line(segments, point, new_point, height, layer)
-            point = new_point
-        elif command in ["C", "c"]:
-            p1 = (float(tokens[i]), float(tokens[i + 1]))
-            p2 = (float(tokens[i + 2]), float(tokens[i + 3]))
-            p3 = (float(tokens[i + 4]), float(tokens[i + 5]))
-            i += 6
-            if command == "c":
-                p1 = (p1[0] + point[0], p1[1] + point[1])
-                p2 = (p2[0] + point[0], p2[1] + point[1])
-                p3 = (p3[0] + point[0], p3[1] + point[1])
-            add_curve(segments, point, p1, p2, p3, height, layer)
-            point = p3
-        elif command in ["Z", "z"]:
-            add_line(segments, point, start, height, layer)
-            point = start
-            command = ""
-        else:
-            i += 1
+# Единый параметрический генератор.
+def build_generated_panels(params):
+    contours = []
+
+    for x, y, width, style in wall_layout(params):
+        contours.extend(wall_contours(x, y, width, params.height, params, style))
+
+    bottom_x, bottom_y, bottom_width, bottom_height = bottom_layout(params)
+    contours.extend(bottom_contours(bottom_x, bottom_y, bottom_width, bottom_height, params))
+
+    top_x, top_y, top_width, top_height = top_layout(params)
+    contours.extend(top_contours(top_x, top_y, top_width, top_height, params))
+
+    mounts_x, mounts_y = mounts_layout(params)
+    contours.extend(mounts_contours(mounts_x, mounts_y, params))
+
+    return [make_panel("ElectronicsBox", 0, 0, contours)]
+
+
+def make_panel(title, x, y, contours):
+    segments = contours_to_segments(contours)
+    return Panel(title, x, y, segments)
+
+
+def layout_margin():
+    return 10.0
+
+
+def layout_gap(params):
+    return params.thickness / 2
+
+
+def wall_layout(params):
+    margin = layout_margin()
+    gap = layout_gap(params)
+    x1 = margin
+    x2 = margin + params.length + gap
+    y1 = margin
+    y2 = margin + params.height + gap
+
+    return [
+        (x1, y1, params.length, "outer"),
+        (x2, y1, params.depth, "inner"),
+        (x2, y2, params.depth, "inner"),
+        (x1, y2, params.length, "outer"),
+    ]
+
+
+def bottom_layout(params):
+    margin = layout_margin()
+    gap = layout_gap(params)
+    y = margin + params.height * 2 + gap * 2
+    return margin, y, bottom_plate_width(params), params.depth
+
+
+def top_layout(params):
+    bottom_x, bottom_y, _, bottom_height = bottom_layout(params)
+    y = bottom_y + bottom_height + layout_gap(params)
+    width = max(params.length - 2 * params.thickness, params.thickness)
+    height = max(params.depth - 2 * params.thickness, params.thickness)
+    return bottom_x, y, width, height
+
+
+def mounts_layout(params):
+    top_x, top_y, top_width, _ = top_layout(params)
+    return top_x + top_width + layout_gap(params), top_y
+
+
+def wall_contours(x, y, width, height, params, style):
+    slot_offset = wall_mount_slot_offset(params)
+    slot_y = y + height - slot_offset - params.thickness
+    return [
+        (
+            HOLES,
+            rect_contour(
+                x + slot_offset,
+                slot_y,
+                params.finger_width,
+                params.thickness,
+            ),
+        ),
+        (
+            HOLES,
+            rect_contour(
+                x + width - slot_offset - params.finger_width,
+                slot_y,
+                params.finger_width,
+                params.thickness,
+            ),
+        ),
+        (CUT, wall_outline(x, y, width, height, params, style)),
+    ]
+
+
+def wall_outline(x, y, width, height, params, style):
+    thickness = params.thickness
+    top_start = top_finger_start(width, params)
+    points = [(x + thickness, y + thickness), (x + top_start, y + thickness)]
+    add_wall_top_fingers(points, x, y, width, params)
+
+    if style == "outer":
+        points.append((x + width, y + thickness))
+        points.extend(wall_side_down(x + width, x + width - thickness, y, height, params))
+        points.extend([(x + thickness, y + height), (x, y + height)])
+        points.extend(wall_side_up(x, x + thickness, y, height, params))
+    else:
+        points.extend(wall_side_down(x + width - thickness, x + width, y, height, params))
+        points.append((x + thickness, y + height))
+        points.extend(wall_side_up(x + thickness, x, y, height, params))
+
+    return points
+
+
+def add_wall_top_fingers(points, x, y, width, params):
+    thickness = params.thickness
+    finger_width = params.finger_width
+    start = top_finger_start(width, params)
+
+    for index in range(joint_count(width, params)):
+        current_x = start + index * finger_width * 2
+        points.extend(
+            [
+                (x + current_x, y),
+                (x + current_x + finger_width, y),
+                (x + current_x + finger_width, y + thickness),
+                (x + current_x + finger_width * 2, y + thickness),
+            ]
+        )
+
+    points[-1] = (x + width - thickness, y + thickness)
+
+
+def wall_side_down(edge_x, notch_x, y, height, params):
+    points = []
+    for offset in side_finger_offsets(height, params):
+        points.extend(
+            [
+                (edge_x, y + offset),
+                (notch_x, y + offset),
+                (notch_x, y + offset + params.finger_width),
+                (edge_x, y + offset + params.finger_width),
+            ]
+        )
+
+    points.append((edge_x, y + height))
+    if edge_x > notch_x and abs(edge_x - notch_x) == params.thickness:
+        points.append((notch_x, y + height))
+
+    return points
+
+
+def wall_side_up(edge_x, notch_x, y, height, params):
+    points = []
+    offsets = side_finger_offsets(height, params)
+
+    for offset in reversed(offsets):
+        upper_offset = offset + params.finger_width
+        points.extend(
+            [
+                (edge_x, y + upper_offset),
+                (notch_x, y + upper_offset),
+                (notch_x, y + offset),
+                (edge_x, y + offset),
+            ]
+        )
+
+    if edge_x < notch_x:
+        points.extend([(edge_x, y + params.thickness), (notch_x, y + params.thickness)])
+    else:
+        points.append((edge_x, y + params.thickness))
+
+    return points
+
+
+def joint_count(length, params):
+    available = max(0.0, length - 2 * params.thickness)
+    return max(1, int(available // (params.finger_width * 2)))
+
+
+def top_finger_start(length, params):
+    available = max(0.0, length - 2 * params.thickness)
+    used = joint_count(length, params) * params.finger_width * 2
+    return params.thickness + (available - used) / 2 + params.thickness
+
+
+def side_finger_offsets(length, params):
+    start = top_finger_start(length, params) + params.thickness / 2
+    return [start + index * params.finger_width * 2 for index in range(joint_count(length, params))]
+
+
+def bottom_contours(x, y, width, height, params):
+    radius = bottom_corner_radius(params)
+    contours = [
+        (HOLES, circle_contour(x + radius, y + radius, params.thickness / 2, 0.0)),
+        (CUT, rounded_bottom_outline(x, y, width, height, params)),
+        (HOLES, circle_contour(x + width - radius, y + radius, params.thickness / 2, 90.0)),
+    ]
+
+    side = bottom_side_extension(params)
+    for slot_y in bottom_slot_ys(y, height, params):
+        contours.append(
+            (
+                HOLES,
+                rect_contour(
+                    x + width - side - params.thickness,
+                    slot_y,
+                    params.thickness,
+                    params.finger_width,
+                ),
+            )
+        )
+
+    contours.append(
+        (HOLES, circle_contour(x + width - radius, y + height - radius, params.thickness / 2, 180.0))
+    )
+    contours.append((HOLES, circle_contour(x + radius, y + height - radius, params.thickness / 2, -90.0)))
+
+    for slot_y in reversed(bottom_slot_ys(y, height, params)):
+        contours.append((HOLES, rect_contour(x + side, slot_y, params.thickness, params.finger_width)))
+
+    return contours
+
+
+def rounded_bottom_outline(x, y, width, height, params):
+    thickness = params.thickness
+    finger_width = params.finger_width
+    radius = bottom_corner_radius(params)
+    side = bottom_side_extension(params)
+    start = top_finger_start(params.length, params)
+    count = joint_count(params.length, params)
+
+    points = [(x + radius, y), (x + side + thickness, y), (x + side + start, y)]
+
+    for index in range(count):
+        current_x = x + side + start + index * finger_width * 2
+        points.extend(
+            [
+                (current_x, y + thickness),
+                (current_x + finger_width, y + thickness),
+                (current_x + finger_width, y),
+                (current_x + finger_width * 2, y),
+            ]
+        )
+
+    points[-1] = (x + width - side - thickness, y)
+    points.append((x + width - radius, y))
+    points.extend(arc_points(x + width - radius, y + radius, radius, -90.0, 0.0)[1:])
+    points.append((x + width, y + height - radius))
+    points.extend(arc_points(x + width - radius, y + height - radius, radius, 0.0, 90.0)[1:])
+    points.extend([(x + width - side - thickness, y + height), (x + width - side - start, y + height)])
+
+    for index in range(count):
+        current_x = x + width - side - start - index * finger_width * 2
+        points.extend(
+            [
+                (current_x, y + height - thickness),
+                (current_x - finger_width, y + height - thickness),
+                (current_x - finger_width, y + height),
+                (current_x - finger_width * 2, y + height),
+            ]
+        )
+
+    points[-1] = (x + side + thickness, y + height)
+    points.append((x + radius, y + height))
+    points.extend(arc_points(x + radius, y + height - radius, radius, 90.0, 180.0)[1:])
+    points.append((x, y + radius))
+    points.extend(arc_points(x + radius, y + radius, radius, 180.0, 270.0)[1:])
+    return points
+
+
+def bottom_plate_width(params):
+    return params.length + 2 * bottom_side_extension(params)
+
+
+def bottom_side_extension(params):
+    return max(14.0, params.thickness * 4 + 2)
+
+
+def bottom_corner_radius(params):
+    return max(7.0, params.thickness * 2 + 1)
+
+
+def bottom_slot_ys(y, height, params):
+    start = top_finger_start(height, params)
+    return [y + start + index * params.finger_width * 2 for index in range(joint_count(height, params))]
+
+
+def top_contours(x, y, width, height, params):
+    offset = min(params.finger_width + params.thickness * 0.75, width / 2, height / 2)
+    radius = params.thickness / 2
+    return [
+        (HOLES, circle_contour(round(x + offset, 3), round(y + offset, 3), radius, 0.0)),
+        (CUT, outline_rect_contour(x, y, width, height)),
+        (HOLES, circle_contour(round(x + width - offset, 3), round(y + offset, 3), radius, 90.0)),
+        (HOLES, circle_contour(round(x + width - offset, 3), round(y + height - offset, 3), radius, 180.0)),
+        (HOLES, circle_contour(round(x + offset, 3), round(y + height - offset, 3), radius, -90.0)),
+    ]
+
+
+def mounts_contours(x, y, params):
+    size = mount_size(params)
+    radius = max(1.0, params.thickness / 3)
+    gap = params.thickness
+    second_pair_y = y + size + params.thickness + gap
+
+    upper_x = x + size / 4
+    lower_x = x
+
+    upper_y_1 = y
+    lower_y_1 = y + params.thickness
+    upper_y_2 = second_pair_y
+    lower_y_2 = second_pair_y + params.thickness
+
+    return [
+        (CUT, upper_mount_contour(upper_x, upper_y_1, size, params)),
+        (HOLES, circle_contour(upper_x + size * 0.6, upper_y_1 + size * 0.4, radius, 90.0)),
+        (CUT, lower_mount_contour(lower_x, lower_y_1, size, params)),
+        (HOLES, circle_contour(lower_x + size * 0.4, lower_y_1 + size * 0.6, radius, -90.0)),
+        (CUT, upper_mount_contour(upper_x, upper_y_2, size, params)),
+        (HOLES, circle_contour(upper_x + size * 0.6, upper_y_2 + size * 0.4, radius, 90.0)),
+        (CUT, lower_mount_contour(lower_x, lower_y_2, size, params)),
+        (HOLES, circle_contour(lower_x + size * 0.4, lower_y_2 + size * 0.6, radius, -90.0)),
+    ]
+
+
+def mount_size(params):
+    nominal_size = 28.0
+    scale = min(params.length, params.depth, params.height) / 100.0
+    minimum_size = params.finger_width + params.thickness * 2
+    return max(minimum_size, nominal_size * scale)
+
+
+def wall_mount_slot_offset(params):
+    return mount_notch_center(mount_size(params), params)
+
+
+def mount_notch_center(size, params):
+    return size / 2 - params.thickness / 2
+
+
+def upper_mount_contour(x, y, size, params):
+    thickness = params.thickness
+    finger_width = params.finger_width
+    notch_center = mount_notch_center(size, params)
+    notch_start = notch_center - finger_width / 2
+    notch_end = notch_center + finger_width / 2
+    inner_edge = size - thickness
+
+    return [
+        (x, y + thickness),
+        (x + notch_start, y + thickness),
+        (x + notch_start, y),
+        (x + notch_end, y),
+        (x + notch_end, y + thickness),
+        (x + inner_edge, y + thickness),
+        (x + inner_edge, y + notch_center),
+        (x + size, y + notch_center),
+        (x + size, y + notch_center + finger_width),
+        (x + inner_edge, y + notch_center + finger_width),
+        (x + inner_edge, y + size),
+        (x, y + thickness),
+    ]
+
+
+def lower_mount_contour(x, y, size, params):
+    thickness = params.thickness
+    finger_width = params.finger_width
+    notch_center = mount_notch_center(size, params)
+    notch_start = notch_center - finger_width / 2
+    notch_end = notch_center + finger_width / 2
+    inner_edge = size - thickness
+
+    return [
+        (x + size, y + inner_edge),
+        (x + notch_center + finger_width, y + inner_edge),
+        (x + notch_center + finger_width, y + size),
+        (x + notch_center, y + size),
+        (x + notch_center, y + inner_edge),
+        (x + thickness, y + inner_edge),
+        (x + thickness, y + notch_end),
+        (x, y + notch_end),
+        (x, y + notch_start),
+        (x + thickness, y + notch_start),
+        (x + thickness, y),
+        (x + size, y + inner_edge),
+    ]
+
+
+def rect_contour(x, y, width, height):
+    return [
+        (x, y + height),
+        (x + width, y + height),
+        (x + width, y),
+        (x, y),
+        (x, y + height),
+    ]
+
+
+def outline_rect_contour(x, y, width, height):
+    return [
+        (x, y),
+        (x + width, y),
+        (x + width, y + height),
+        (x, y + height),
+        (x, y),
+    ]
+
+
+def circle_contour(cx, cy, radius, start_degrees):
+    points = []
+    for index in range(CIRCLE_STEPS + 1):
+        angle = math.radians(start_degrees - 360.0 * index / CIRCLE_STEPS)
+        points.append((cx + radius * math.cos(angle), cy + radius * math.sin(angle)))
+    return points
+
+
+def arc_points(cx, cy, radius, start_degrees, end_degrees):
+    points = []
+    for index in range(CORNER_STEPS + 1):
+        angle = math.radians(start_degrees + (end_degrees - start_degrees) * index / CORNER_STEPS)
+        points.append((cx + radius * math.cos(angle), cy + radius * math.sin(angle)))
+    return points
+
+
+def contours_to_segments(contours):
+    segments = []
+    for layer, contour in contours:
+        segments.extend(contour_to_segments(contour, layer))
+    return segments
+
+
+def contour_to_segments(contour, layer):
+    if len(contour) < 2:
+        return []
+
+    points = []
+    for point in contour:
+        points.append(clean_point(point))
+
+    if points[0] != points[-1]:
+        points.append(points[0])
+
+    segments = []
+    for start, end in zip(points, points[1:]):
+        length = math.hypot(end[0] - start[0], end[1] - start[1])
+        if length >= EPSILON:
+            segments.append(Segment(start, end, layer))
 
     return segments
 
 
-def add_line(segments, p1, p2, height, layer):
-    x1, y1 = p1
-    x2, y2 = p2
-    if math.hypot(x2 - x1, y2 - y1) < 0.0001:
-        return
-    segments.append(Segment("line", (x1, height - y1, x2, height - y2), layer))
+def clean_point(point):
+    x, y = point
+    return clean_number(x), clean_number(y)
 
 
-def add_curve(segments, p0, p1, p2, p3, height, layer):
-    last = p0
-    for n in range(1, 17):
-        t = n / 16
-        x = (1 - t) ** 3 * p0[0] + 3 * (1 - t) ** 2 * t * p1[0] + 3 * (1 - t) * t ** 2 * p2[0] + t ** 3 * p3[0]
-        y = (1 - t) ** 3 * p0[1] + 3 * (1 - t) ** 2 * t * p1[1] + 3 * (1 - t) * t ** 2 * p2[1] + t ** 3 * p3[1]
-        current = (x, y)
-        add_line(segments, last, current, height, layer)
-        last = current
-
-
-def path_raw_bounds(text):
-    tokens = re.findall(r"[MmLlHhVvCcZz]|[-+]?\d+(?:\.\d+)?", text)
-    points = []
-    i = 0
-    command = ""
-    point = (0.0, 0.0)
-    start = (0.0, 0.0)
-
-    while i < len(tokens):
-        if tokens[i].isalpha():
-            command = tokens[i]
-            i += 1
-
-        if command in ["M", "m", "L", "l"]:
-            x = float(tokens[i])
-            y = float(tokens[i + 1])
-            i += 2
-            if command in ["m", "l"]:
-                x += point[0]
-                y += point[1]
-            point = (x, y)
-            points.append(point)
-            if command in ["M", "m"]:
-                start = point
-                command = "L" if command == "M" else "l"
-        elif command in ["H", "h"]:
-            x = float(tokens[i])
-            i += 1
-            if command == "h":
-                x += point[0]
-            point = (x, point[1])
-            points.append(point)
-        elif command in ["V", "v"]:
-            y = float(tokens[i])
-            i += 1
-            if command == "v":
-                y += point[1]
-            point = (point[0], y)
-            points.append(point)
-        elif command in ["C", "c"]:
-            values = [float(tokens[i + n]) for n in range(6)]
-            i += 6
-            curve_points = [(values[0], values[1]), (values[2], values[3]), (values[4], values[5])]
-            if command == "c":
-                curve_points = [(x + point[0], y + point[1]) for x, y in curve_points]
-            points.extend(curve_points)
-            point = curve_points[-1]
-        elif command in ["Z", "z"]:
-            point = start
-            points.append(point)
-            command = ""
-        else:
-            i += 1
-
-    if not points:
-        return None
-
-    xs = [point[0] for point in points]
-    ys = [point[1] for point in points]
-    return min(xs), min(ys), max(xs), max(ys)
+def clean_number(value):
+    rounded = round(value, 6)
+    if abs(rounded) < ZERO_EPSILON:
+        return 0.0
+    return rounded
 
 
 def segment_bounds(segments):
-    points = []
-    for segment in segments:
-        if segment.kind == "line":
-            x1, y1, x2, y2 = segment.values
-            points.append((x1, y1))
-            points.append((x2, y2))
-        elif segment.kind == "circle":
-            x, y, r = segment.values
-            points.append((x - r, y - r))
-            points.append((x + r, y + r))
-        elif segment.kind == "arc":
-            x, y, r = segment.values[:3]
-            points.append((x - r, y - r))
-            points.append((x + r, y + r))
-        elif segment.kind == "rect":
-            x, y, w, h = segment.values
-            points.append((x, y))
-            points.append((x + w, y + h))
-
-    if not points:
+    if not segments:
         return None
 
-    xs = []
-    ys = []
-    for x, y in points:
-        xs.append(x)
-        ys.append(y)
+    min_x = min_y = math.inf
+    max_x = max_y = -math.inf
 
-    return min(xs), min(ys), max(xs), max(ys)
+    for segment in segments:
+        for x, y in [segment.start, segment.end]:
+            min_x = min(min_x, x)
+            min_y = min(min_y, y)
+            max_x = max(max_x, x)
+            max_y = max(max_y, y)
+
+    return min_x, min_y, max_x, max_y
