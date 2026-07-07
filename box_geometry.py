@@ -21,7 +21,7 @@ class BoxParams:
     height: float = 100
     thickness: float = 3
     finger_width: float = 6
-    sheet_width: float = 230
+    sheet_width: float = 300
     sheet_height: float = 460
 
     def __post_init__(self):
@@ -198,13 +198,14 @@ def mounts_layout(params):
 
 
 def wall_contours(x, y, width, height, params, style):
-    slot_offset = side_finger_offsets(width, params)[0]
+    slot_offset = wall_mount_slot_offset(params)
+    slot_y = y + height - slot_offset - params.thickness
     return [
         (
             HOLES,
             rect_contour(
                 x + slot_offset,
-                y + height - params.finger_width,
+                slot_y,
                 params.finger_width,
                 params.thickness,
             ),
@@ -213,7 +214,7 @@ def wall_contours(x, y, width, height, params, style):
             HOLES,
             rect_contour(
                 x + width - slot_offset - params.finger_width,
-                y + height - params.finger_width,
+                slot_y,
                 params.finger_width,
                 params.thickness,
             ),
@@ -452,13 +453,24 @@ def mounts_contours(x, y, params):
 
 
 def mount_size(params):
-    return max(28.0, params.thickness * 8)
+    nominal_size = 28.0
+    scale = min(params.length, params.depth, params.height) / 100.0
+    minimum_size = params.finger_width + params.thickness * 2
+    return max(minimum_size, nominal_size * scale)
+
+
+def wall_mount_slot_offset(params):
+    return mount_notch_center(mount_size(params), params)
+
+
+def mount_notch_center(size, params):
+    return size / 2 - params.thickness / 2
 
 
 def upper_mount_contour(x, y, size, params):
     thickness = params.thickness
     finger_width = params.finger_width
-    notch_center = size / 2 - thickness / 2
+    notch_center = mount_notch_center(size, params)
     notch_start = notch_center - finger_width / 2
     notch_end = notch_center + finger_width / 2
     inner_edge = size - thickness
@@ -482,7 +494,7 @@ def upper_mount_contour(x, y, size, params):
 def lower_mount_contour(x, y, size, params):
     thickness = params.thickness
     finger_width = params.finger_width
-    notch_center = size / 2 - thickness / 2
+    notch_center = mount_notch_center(size, params)
     notch_start = notch_center - finger_width / 2
     notch_end = notch_center + finger_width / 2
     inner_edge = size - thickness

@@ -8,8 +8,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from box_geometry import (
     BoxParams,
     build_panels,
+    mount_size,
     segment_bounds,
     verify_assembly,
+    wall_mount_slot_offset,
 )
 from dxf_writer import create_dxf_document, save_dxf_file
 
@@ -72,6 +74,26 @@ class BoxGeneratorTests(unittest.TestCase):
             min_x, min_y, max_x, max_y = segment_bounds(segments)
             self.assertLessEqual(max_x - min_x, params.sheet_width)
             self.assertLessEqual(max_y - min_y, params.sheet_height)
+
+    def test_mounts_scale_with_box_size(self):
+        self.assertAlmostEqual(mount_size(BoxParams()), 28.0, places=3)
+        self.assertAlmostEqual(mount_size(BoxParams(50, 50, 50, 3, 6)), 14.0, places=3)
+
+    def test_wall_mount_slots_follow_mount_notch_height(self):
+        params = BoxParams()
+        expected_y = 10 + params.height - wall_mount_slot_offset(params) - params.thickness
+        bounds = rectangular_hole_bounds(params)
+        matches = []
+
+        for min_x, min_y, max_x, max_y in bounds:
+            width = max_x - min_x
+            height = max_y - min_y
+            if abs(width - params.finger_width) < 0.001 and abs(height - params.thickness) < 0.001:
+                if abs(min_y - expected_y) < 0.001:
+                    matches.append((min_x, min_y, max_x, max_y))
+
+        self.assertEqual(len(matches), 4)
+        self.assertAlmostEqual(expected_y, 94.5, places=3)
 
     def test_slots_match_teeth(self):
         params = BoxParams()
@@ -169,13 +191,21 @@ def joint_line_sizes(params):
 
 
 def rectangular_hole_sizes(params):
+    sizes = []
+    for min_x, min_y, max_x, max_y in rectangular_hole_bounds(params):
+        sizes.append((max_x - min_x, max_y - min_y))
+
+    return sizes
+
+
+def rectangular_hole_bounds(params):
     hole_lines = []
     for panel in build_panels(params):
         for segment in panel.segments:
             if segment.layer == "HOLES":
                 hole_lines.append(segment)
 
-    sizes = []
+    bounds = []
     for component in line_components(hole_lines):
         if len(component) != 4:
             continue
@@ -201,9 +231,9 @@ def rectangular_hole_sizes(params):
         width = max(xs) - min(xs)
         height = max(ys) - min(ys)
         if width > 1 and height > 1:
-            sizes.append((width, height))
+            bounds.append((min(xs), min(ys), max(xs), max(ys)))
 
-    return sizes
+    return bounds
 
 
 def line_components(segments):
